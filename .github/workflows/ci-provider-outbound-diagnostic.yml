@@ -1,0 +1,70 @@
+name: Provider outbound diagnostic
+on:
+  push:
+    branches: [audit/ci-source-provenance-20260913]
+    paths: [.github/workflows/ci-provider-outbound-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  trace:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: 0aeb1992cd257c8854581066418e3ff54fbbb5d3
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: ./.github/actions/setup-project-bun
+      - name: Install locked dependencies and build test assets
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          (cd gui && bun install --frozen-lockfile && bun run build)
+      - name: Trace the actual fixture without substituting its DNS outcomes
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/provider-outbound-diagnostic
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tests/fixtures/provider-outbound-e2e.ts')
+          text=p.read_text()
+          statements=['const [proxyPort, providerPort]', 'const outboundResponse', 'const managementProxy', 'const proxyModels', 'const allProxyResponse', 'const managementNoProxy', 'const managementDirect', 'const directModels', 'console.log(JSON.stringify', 'await Promise.all([close(proxy), close(provider)])']
+          for n,s in enumerate(statements):
+              assert text.count(s)==1, s
+              text=text.replace(s, f'console.error("TRACE phase {n} " + performance.now());\n  '+s)
+          p.with_name('provider-outbound-e2e.diagnostic.ts').write_text(text)
+          preload='''import { mock } from "bun:test";
+          import * as dns from "node:dns/promises";
+          const originalLookup = dns.lookup;
+          mock.module("node:dns/promises", () => ({ ...dns,
+            lookup: async (...args: Parameters<typeof originalLookup>) => {
+              const started = performance.now();
+              console.error("TRACE DNS start " + args[0] + " " + started);
+              try { return await (originalLookup as (...items: unknown[]) => Promise<unknown>)(...args); }
+              finally { console.error("TRACE DNS end " + args[0] + " " + (performance.now()-started)); }
+            }
+          }));
+          '''
+          Path('.tmp/provider-outbound-diagnostic/dns-trace.ts').write_text(preload)
+          PY
+          export OPENCODEX_HOME="$RUNNER_TEMP/provider-outbound-diagnostic-home"
+          bun --preload ./.tmp/provider-outbound-diagnostic/dns-trace.ts tests/fixtures/provider-outbound-e2e.diagnostic.ts > .tmp/provider-outbound-diagnostic/result.json 2> .tmp/provider-outbound-diagnostic/trace.log
+          cat .tmp/provider-outbound-diagnostic/trace.log
+          cat .tmp/provider-outbound-diagnostic/result.json
+          bun test --isolate tests/providers/provider-outbound.test.ts > .tmp/provider-outbound-diagnostic/original-suite.log 2>&1
+      - name: Preserve native execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: provider-outbound-diagnostic-${{ matrix.os }}
+          path: .tmp/provider-outbound-diagnostic/
+          retention-days: 7
+          if-no-files-found: error
