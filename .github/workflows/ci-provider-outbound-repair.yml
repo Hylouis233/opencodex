@@ -26,12 +26,13 @@ jobs:
         run: |
           set -euo pipefail
           git show HEAD:.github/maintenance/provider-outbound-repair.patch > "$RUNNER_TEMP/provider-outbound.patch"
-          echo '895d42a85f162a372969fe7fa124db5532cc50cbb20cc8307ac1506c2db2ad54  '"$RUNNER_TEMP/provider-outbound.patch" | shasum -a 256 --check
+          git show HEAD:.github/maintenance/provider-outbound-controls.py > "$RUNNER_TEMP/provider-outbound-controls.py"
+          python -c 'import hashlib,os; from pathlib import Path; p=Path(os.environ["RUNNER_TEMP"])/"provider-outbound.patch"; assert hashlib.sha256(p.read_bytes()).hexdigest()=="dc1d14995006927b290b8a125c8aa4c4ec35c348f6f76a39ef33d6fcb899a27e"'
           git checkout --detach 0aeb1992cd257c8854581066418e3ff54fbbb5d3
           test "$(git rev-parse HEAD^{tree})" = 8cb8dbd8e0ef11ee040d6e366f83ad04b3229d13
           git apply --index --check "$RUNNER_TEMP/provider-outbound.patch"
           git apply --index "$RUNNER_TEMP/provider-outbound.patch"
-          test "$(git write-tree)" = 1e258489f7ec5e8b404c25b5ca79ca926bff6e6c
+          test "$(git write-tree)" = 8bc3699b7d493cca49bfb9feaa6571813a3c2681
           git diff --exit-code
           git diff --cached --check
           mkdir -p .tmp/provider-outbound-repair
@@ -47,68 +48,7 @@ jobs:
       - name: Prove slow DNS isolation and child-timeout failure semantics
         run: |
           set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          import json, os, re, shutil, subprocess, tempfile, time
-          root=Path('.tmp/provider-outbound-repair')
-          fixture=Path('tests/fixtures/provider-outbound-e2e.ts')
-          candidate=fixture.read_text()
-          baseline=subprocess.check_output(['git','show','HEAD:'+fixture.as_posix()],text=True)
-          baseline_path=fixture.with_name('provider-outbound-e2e.baseline-diagnostic.ts')
-          baseline_path.write_text(baseline)
-          preload=root/'slow-dns.ts'
-          preload.write_text('''import { mock } from "bun:test";
-          mock.module("node:dns/promises", () => ({ lookup: async (hostname: string) => {
-            console.error("SLOW_SYSTEM_DNS " + hostname);
-            await Bun.sleep(6_000);
-            throw Object.assign(new Error("getaddrinfo ENOTFOUND " + hostname), {code:"ENOTFOUND"});
-          }}));
-          ''')
-          def capture(name, command, timeout=20):
-              home=tempfile.mkdtemp(prefix='ocx-proxy-control-')
-              env=dict(os.environ,OPENCODEX_HOME=home)
-              started=time.monotonic()
-              process=subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8',errors='replace')
-              timed_out=False
-              try:
-                  try:
-                      stdout,stderr=process.communicate(timeout=timeout)
-                  except subprocess.TimeoutExpired:
-                      timed_out=True
-                      process.kill()
-                      stdout,stderr=process.communicate(timeout=5)
-                  result={'returncode':process.returncode,'timed_out':timed_out,'seconds':time.monotonic()-started,'stdout':stdout,'stderr':stderr}
-                  (root/(name+'.json')).write_text(json.dumps(result,indent=2),encoding='utf-8')
-                  return result
-              finally:
-                  if process.poll() is None:
-                      process.kill();process.wait(timeout=5)
-                  shutil.rmtree(home,ignore_errors=True)
-          try:
-              old=capture('slow-dns-baseline',['bun','--preload','./'+preload.as_posix(),baseline_path.as_posix()],15)
-              assert old['timed_out'], 'Baseline unexpectedly avoided the injected slow system resolver'
-              assert 'SLOW_SYSTEM_DNS proxy-only.invalid' in old['stderr']
-              new=capture('slow-dns-candidate',['bun','--preload','./'+preload.as_posix(),fixture.as_posix()],15)
-              assert not new['timed_out'] and new['returncode']==0, new
-              assert 'SLOW_SYSTEM_DNS' not in new['stderr'], 'Candidate reached the external resolver seam'
-              value=json.loads(new['stdout'])
-              assert value['dnsLookups']==['proxy-only.invalid','connection-proxy.invalid','proxy-models.invalid','all-proxy-only.invalid']
-              assert len(value['proxyRequests'])==4 and len(value['providerRequests'])==3
-              fixture.write_text(candidate+'\nconsole.error("DIAGNOSTIC_CHILD_PID " + process.pid);\nsetInterval(() => {}, 1_000);\n')
-              hung=capture('hung-child-negative',['bun','test','--isolate','--test-name-pattern','proxy mode reaches one real proxy','tests/providers/provider-outbound.test.ts'],20)
-              assert not hung['timed_out'] and hung['returncode']!=0, hung
-              assert 'provider outbound fixture exited' in hung['stderr'], hung
-              assert 'this test timed out' not in hung['stderr'], 'Outer deadline fired before fixture cleanup'
-              match=re.search(r'DIAGNOSTIC_CHILD_PID (\d+)',hung['stderr'])
-              assert match, 'Hung fixture did not reach the diagnostic hold'
-              pid=match.group(1)
-              probe=subprocess.run(['bun','-e',f'try {{ process.kill({pid}, 0); process.exit(1); }} catch (error) {{ if (error.code !== "ESRCH") throw error; }}'],capture_output=True,text=True)
-              assert probe.returncode==0, 'Fixture process was not reaped: '+probe.stderr
-              (root/'negative-controls-passed.txt').write_text('Slow system DNS: baseline times out; candidate avoids the system resolver.\nHung child: parent fails explicitly, before the outer deadline, and the child is gone.\n')
-          finally:
-              fixture.write_text(candidate)
-              baseline_path.unlink(missing_ok=True)
-          PY
+          python "$RUNNER_TEMP/provider-outbound-controls.py"
           git diff --exit-code
       - name: Run the repaired test with all original assertions and adjacent policy tests
         run: |
@@ -135,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           git diff --exit-code
-          test "$(git write-tree)" = 1e258489f7ec5e8b404c25b5ca79ca926bff6e6c
+          test "$(git write-tree)" = 8bc3699b7d493cca49bfb9feaa6571813a3c2681
           git diff --cached --check
       - name: Preserve the exact-tree test evidence
         if: always()
@@ -164,7 +104,7 @@ jobs:
           git show HEAD:.github/maintenance/provider-outbound-repair.patch > "$RUNNER_TEMP/provider-outbound.patch"
           git checkout --detach 0aeb1992cd257c8854581066418e3ff54fbbb5d3
           git apply --index "$RUNNER_TEMP/provider-outbound.patch"
-          test "$(git write-tree)" = 1e258489f7ec5e8b404c25b5ca79ca926bff6e6c
+          test "$(git write-tree)" = 8bc3699b7d493cca49bfb9feaa6571813a3c2681
           git diff --exit-code
           git diff --cached --check
           git config user.name 'Hong Liu'
