@@ -1,0 +1,71 @@
+name: CI log provenance audit
+
+on:
+  push:
+    branches: [audit/ci-source-provenance-20260913]
+    paths: [.github/workflows/ci-log-provenance.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+jobs:
+  capture:
+    if: github.repository == 'Hylouis233/opencodex'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read the original run and both Windows attempts without executing repository code
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/opencodex-ci-logs"
+          mkdir -p "$evidence"
+          api=https://api.github.com/repos/Hylouis233/opencodex
+          get() {
+            curl --fail --silent --show-error --location --max-time 180 \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "$1" --output "$2"
+          }
+          get "$api/actions/runs/34014624174" "$evidence/run.json"
+          for attempt in 1 2; do
+            get "$api/actions/runs/34014624174/attempts/$attempt/jobs?per_page=100" "$evidence/jobs-attempt-$attempt.json"
+          done
+          export EVIDENCE="$evidence"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE'])
+          run = json.loads((root/'run.json').read_text())
+          assert run['id'] == 34014624174
+          assert run['head_sha'] == '0aeb1992cd257c8854581066418e3ff54fbbb5d3'
+          selected = []
+          for attempt in (1, 2):
+              result = json.loads((root/f'jobs-attempt-{attempt}.json').read_text())
+              assert result['total_count'] == len(result['jobs']), 'Incomplete job listing'
+              jobs = [j for j in result['jobs'] if j['name'] == 'windows 2/6']
+              assert len(jobs) == 1, 'Ambiguous Windows shard identity'
+              job = jobs[0]
+              assert job['run_id'] == run['id']
+              if job.get('head_sha') is not None:
+                  assert job['head_sha'] == run['head_sha']
+              selected.append({'attempt': attempt, 'id': job['id'], 'status': job['status'], 'conclusion': job['conclusion']})
+          (root/'selected-jobs.json').write_text(json.dumps(selected, indent=2)+'\n')
+          (root/'selected-jobs.txt').write_text(''.join(f"{j['attempt']} {j['id']}\n" for j in selected))
+          PY
+          while read -r attempt job; do
+            get "$api/actions/jobs/$job/logs" "$evidence/windows-2-of-6-attempt-$attempt.log"
+          done < "$evidence/selected-jobs.txt"
+          (cd "$evidence" && sha256sum *.json *.log > SHA256SUMS)
+          cat "$evidence/selected-jobs.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve the original metadata and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: opencodex-ci-logs-34014624174
+          path: ${{ runner.temp }}/opencodex-ci-logs/
+          retention-days: 7
+          if-no-files-found: error
