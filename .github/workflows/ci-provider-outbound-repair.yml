@@ -27,12 +27,12 @@ jobs:
           set -euo pipefail
           git show HEAD:.github/maintenance/provider-outbound-repair.patch > "$RUNNER_TEMP/provider-outbound.patch"
           git show HEAD:.github/maintenance/provider-outbound-controls.py > "$RUNNER_TEMP/provider-outbound-controls.py"
-          python -c 'import hashlib,os; from pathlib import Path; p=Path(os.environ["RUNNER_TEMP"])/"provider-outbound.patch"; assert hashlib.sha256(p.read_bytes()).hexdigest()=="dc1d14995006927b290b8a125c8aa4c4ec35c348f6f76a39ef33d6fcb899a27e"'
+          python -c 'import hashlib,os; from pathlib import Path; p=Path(os.environ["RUNNER_TEMP"])/"provider-outbound.patch"; assert hashlib.sha256(p.read_bytes()).hexdigest()=="6e70794029feb410f43a933e93a79f1c24421da8d21fd27134662c6eef2aec16"'
           git checkout --detach 0aeb1992cd257c8854581066418e3ff54fbbb5d3
           test "$(git rev-parse HEAD^{tree})" = 8cb8dbd8e0ef11ee040d6e366f83ad04b3229d13
           git apply --index --check "$RUNNER_TEMP/provider-outbound.patch"
           git apply --index "$RUNNER_TEMP/provider-outbound.patch"
-          test "$(git write-tree)" = 8bc3699b7d493cca49bfb9feaa6571813a3c2681
+          test "$(git write-tree)" = e12ab91056778f0f7cca0ffb4a5c2009fbc444e4
           git diff --exit-code
           git diff --cached --check
           mkdir -p .tmp/provider-outbound-repair
@@ -75,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           git diff --exit-code
-          test "$(git write-tree)" = 8bc3699b7d493cca49bfb9feaa6571813a3c2681
+          test "$(git write-tree)" = e12ab91056778f0f7cca0ffb4a5c2009fbc444e4
           git diff --cached --check
       - name: Preserve the exact-tree test evidence
         if: always()
@@ -104,7 +104,7 @@ jobs:
           git show HEAD:.github/maintenance/provider-outbound-repair.patch > "$RUNNER_TEMP/provider-outbound.patch"
           git checkout --detach 0aeb1992cd257c8854581066418e3ff54fbbb5d3
           git apply --index "$RUNNER_TEMP/provider-outbound.patch"
-          test "$(git write-tree)" = 8bc3699b7d493cca49bfb9feaa6571813a3c2681
+          test "$(git write-tree)" = e12ab91056778f0f7cca0ffb4a5c2009fbc444e4
           git diff --exit-code
           git diff --cached --check
           git config user.name 'Hong Liu'
