@@ -1,0 +1,73 @@
+name: Provider outbound local diagnosis
+on:
+  push:
+    branches: [audit/ci-source-provenance-20260913]
+    paths: [.github/workflows/ci-provider-outbound-local-kit.yml]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare the candidate without publishing it
+        run: |
+          set -euo pipefail
+          git show HEAD:.github/maintenance/provider-outbound-repair.patch > "$RUNNER_TEMP/candidate.patch"
+          git checkout --detach 0aeb1992cd257c8854581066418e3ff54fbbb5d3
+          git apply "$RUNNER_TEMP/candidate.patch"
+      - uses: ./.github/actions/setup-project-bun
+      - name: Install locked dependencies and build assets
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          (cd gui && bun install --frozen-lockfile && bun run build)
+      - name: Compare fixture-only initialization variants
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json, os, subprocess, tempfile, shutil
+          root=Path('.tmp/provider-proxy-variants');root.mkdir(parents=True)
+          fixture=Path('tests/fixtures/provider-outbound-e2e.ts')
+          text=fixture.read_text()
+          clear='// Do not let a developer\'s proxy settings select an unintended route in this child.\nfor (const key of proxyKeys) delete process.env[key];\n'
+          assert clear in text
+          variants={'candidate':text,'no-initial-clear':text.replace(clear,''),'no-clear-with-turn':text.replace(clear,'').replace('    dnsLookups.push(hostname);','    await Bun.sleep(0);\n    dnsLookups.push(hostname);')}
+          for name,source in variants.items():
+              path=fixture.with_name('provider-outbound-e2e.variant-'+name+'.ts');path.write_text(source)
+              home=tempfile.mkdtemp(prefix='ocx-proxy-variant-')
+              try:
+                  result=subprocess.run(['bun',path.as_posix()],env=dict(os.environ,OPENCODEX_HOME=home),capture_output=True,text=True,timeout=15)
+                  (root/(name+'.json')).write_text(json.dumps({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr},indent=2))
+              finally:
+                  path.unlink(missing_ok=True);shutil.rmtree(home,ignore_errors=True)
+          PY
+      - name: Package the same Bun binary and dependency tree for local reproduction
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/provider-local-kit"
+          cp "$(command -v bun)" "$RUNNER_TEMP/provider-local-kit/bun"
+          tar -czf "$RUNNER_TEMP/provider-local-kit/dependencies.tar.gz" node_modules gui/dist
+          bun --version > "$RUNNER_TEMP/provider-local-kit/runtime-version.txt"
+          (cd "$RUNNER_TEMP/provider-local-kit" && sha256sum bun dependencies.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: provider-outbound-variant-results
+          path: .tmp/provider-proxy-variants/
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: provider-outbound-local-runtime
+          path: ${{ runner.temp }}/provider-local-kit/
+          retention-days: 1
+          if-no-files-found: error
