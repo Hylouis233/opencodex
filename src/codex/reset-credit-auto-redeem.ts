@@ -91,9 +91,10 @@ function readJournal(path: string): Journal {
   }
 }
 
-function writeJournal(path: string, journal: Journal): void {
+function writeJournal(path: string, journal: Journal, now: number): void {
   // Keep only entries whose credit could still matter: settled ones older than a week are noise.
-  const cutoff = Date.now() - 7 * 24 * 60 * 60_000;
+  // Retention must use the same clock as the entries, including injected clocks.
+  const cutoff = now - 7 * 24 * 60 * 60_000;
   journal.entries = journal.entries.filter(e => e.state !== "settled" || e.updatedAt > cutoff);
   atomicWriteFile(path, JSON.stringify(journal, null, 2));
 }
@@ -163,7 +164,7 @@ export function createResetCreditAutoRedeemer(deps: AutoRedeemDeps): ResetCredit
       entry = { accountKey, grantedAt: plan.grantedAt, expiresAt: plan.expiresAt, redeemRequestId: randomUUID(), state: "dispatched", updatedAt: now() };
       journal.entries.push(entry);
       // Journal BEFORE the network call: a crash after this line replays the same request id.
-      writeJournal(path, journal);
+      writeJournal(path, journal, now());
     }
     log(`[opencodex] reset-credit auto-redeem: dispatching for account ${accountKey} (credit expires ${plan.expiresAt})`);
     let result: { code: string };
@@ -176,7 +177,7 @@ export function createResetCreditAutoRedeemer(deps: AutoRedeemDeps): ResetCredit
     }
     entry.state = "settled";
     entry.updatedAt = now();
-    writeJournal(path, journal);
+    writeJournal(path, journal, now());
     log(`[opencodex] reset-credit auto-redeem: upstream answered ${result.code} for account ${accountKey}`);
     schedule(idleRecheckMs);
     return { kind: "dispatched", code: result.code, redeemRequestId: entry.redeemRequestId };

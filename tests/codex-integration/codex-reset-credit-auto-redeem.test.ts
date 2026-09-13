@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync} from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createResetCreditAutoRedeemer,
+  hashAccountKey,
   planAutoRedeem,
   resolveResetCreditAutoRedeemSettings,
   type ResetCredit,
@@ -148,6 +149,65 @@ describe("reset-credit auto-redeemer runtime (#822)", () => {
     h.setNow(T0 + 20 * MIN);
     expect(await h.redeemer.tick()).toEqual({ kind: "skipped", reason: "credit-gone" });
     expect(h.consumed).toHaveLength(0);
+  });
+
+  test("journal retention uses the injected clock before dispatch and after settlement", async () => {
+    // Deliberately unrelated to wall time: advancing the real date must not alter retention.
+    let clock = Date.parse("2000-01-01T10:00:00Z");
+    const week = 7 * 24 * 60 * MIN;
+    const cutoff = clock - week;
+    const journalFile = join(dir, "retention.json");
+    const settled = (id: string, updatedAt: number) => ({
+      accountKey: hashAccountKey("another-account"),
+      grantedAt: "1999-12-01T00:00:00Z",
+      expiresAt: "1999-12-02T00:00:00Z",
+      redeemRequestId: id,
+      state: "settled",
+      updatedAt,
+    });
+    const unresolved = { ...settled("unresolved", cutoff - week), state: "dispatched" };
+    writeFileSync(journalFile, JSON.stringify({ version: 1, entries: [
+      settled("expired", cutoff - 1),
+      settled("at-cutoff", cutoff),
+      settled("recent", cutoff + 1),
+      unresolved,
+    ] }));
+    const journal = () => JSON.parse(readFileSync(journalFile, "utf8")) as {
+      entries: Array<{ redeemRequestId: string; state: string; updatedAt: number }>;
+    };
+    const available = { granted_at: "2000-01-01T00:00:00Z", expires_at: new Date(clock + MIN).toISOString() };
+    const consumed: string[] = [];
+    const redeemer = createResetCreditAutoRedeemer({
+      accountId: "acct-main",
+      settings: () => ({ enabled: true, leadTimeMinutes: 10 }),
+      inspect: async () => ({ credits: [available] }),
+      consume: async id => {
+        consumed.push(id);
+        // The dispatch journal is durable before the request and prunes against the injected time.
+        expect(journal().entries.map(entry => entry.redeemRequestId)).toEqual(["recent", "unresolved", id]);
+        expect(journal().entries.at(-1)?.state).toBe("dispatched");
+        clock += 2; // The near-boundary settled entry expires while consume is in flight.
+        return { code: "reset" };
+      },
+      now: () => clock,
+      setTimer: () => 1,
+      clearTimer: () => {},
+      journalFile,
+      log: () => {},
+    });
+    try {
+      const outcome = await redeemer.tick();
+      expect(outcome.kind).toBe("dispatched");
+      expect(consumed).toHaveLength(1);
+      expect(journal().entries).toEqual([
+        unresolved,
+        expect.objectContaining({ redeemRequestId: consumed[0], state: "settled", updatedAt: clock }),
+      ]);
+      expect(await redeemer.tick()).toEqual({ kind: "skipped", reason: "credit-gone" });
+      expect(consumed).toHaveLength(1);
+    } finally {
+      redeemer.stop();
+    }
   });
 
   test("stop clears the timer", async () => {
