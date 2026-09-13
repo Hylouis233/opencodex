@@ -188,6 +188,22 @@ describe("bun test argv", () => {
     expect(plan.find(lane => lane.label === "codex-shim.test.ts")?.timeoutMs).toBe(3 * 60 * 1000);
   });
 
+  test("the npm launcher runtime is executed once outside the shared worker pool", () => {
+    const file = "cli/ocx-launcher-runtime.test.ts";
+    const plan = resolveBunTestPlan([]);
+    expect(SERIAL_FULL_SUITE_FILES.filter(entry => entry === file)).toHaveLength(1);
+    expect(plan[0]?.args).toContain("**/ocx-launcher-runtime.test.ts");
+    const lanes = plan.filter(lane => lane.args.includes(`./tests/${file}`));
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]?.args).toEqual(["--isolate", "--parallel=1", `./tests/${file}`]);
+    // Two 60s CLI cases and two 120s Windows process cases keep their own
+    // deadlines. The independent lane must leave time for all four plus cleanup.
+    expect(lanes[0]?.timeoutMs).toBe(7 * 60 * 1000);
+    const focused = resolveBunTestPlan([`./tests/${file}`]);
+    expect(focused).toHaveLength(1);
+    expect(focused[0]?.args).not.toContain("--path-ignore-patterns");
+  });
+
   test("serial lanes override caller parallelism without changing the main lane", () => {
     const plan = resolveBunTestPlan(["--parallel=2", "--only-failures"]);
     expect(plan[0]?.args).toContain("--parallel=2");

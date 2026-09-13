@@ -331,6 +331,10 @@ export const SERIAL_FULL_SUITE_FILES = [
   "adapters/openai/openai-provider-option-e2e.test.ts",
   "ci-workflows/release-helper.test.ts",
   "update/update-stop-first.test.ts",
+  // The real Node -> Bun launcher stalled in the full four-worker pool
+  // (run 34765600773), despite passing in an independent process. Keep every
+  // runtime assertion, but do not share the long-lived worker pool with this file.
+  "cli/ocx-launcher-runtime.test.ts",
 ] as const;
 
 type SerialLaneBasename = (typeof SERIAL_FULL_SUITE_FILES)[number] extends infer P
@@ -340,6 +344,9 @@ const SERIAL_LANE_TIMEOUT_MS: Partial<Record<SerialLaneBasename, number>> = {
   // This file intentionally exercises 33 complete release-script subprocess trees.
   // It is ~90s on an idle machine and measured at ~170s under unrelated host load.
   "release-helper.test.ts": 5 * 60 * 1000,
+  // The four existing cases allow 60 + 60 + 120 + 120 seconds in total.
+  // Keep their deadlines unchanged and reserve one further minute for cleanup.
+  "ocx-launcher-runtime.test.ts": 7 * 60 * 1000,
 };
 
 export interface BunTestLane {
