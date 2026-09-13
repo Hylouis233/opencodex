@@ -1,8 +1,8 @@
 diff --git a/tests/fixtures/provider-outbound-e2e.ts b/tests/fixtures/provider-outbound-e2e.ts
-index 55f9ef2..de187c9 100644
+index 55f9ef2..3709581 100644
 --- a/tests/fixtures/provider-outbound-e2e.ts
 +++ b/tests/fixtures/provider-outbound-e2e.ts
-@@ -1,14 +1,42 @@
+@@ -1,12 +1,38 @@
 +import { mock } from "bun:test";
 +import * as dns from "node:dns/promises";
  import { createServer } from "node:http";
@@ -45,12 +45,8 @@ index 55f9ef2..de187c9 100644
 +const { ManagementRequest: Request } = await import("../helpers/management-auth");
  
  const proxyKeys = PROXY_ENV_KEYS.flatMap(key => [key, key.toLowerCase()]);
-+// Do not let a developer's proxy settings select an unintended route in this child.
-+for (const key of proxyKeys) delete process.env[key];
  
- async function listen(server: ReturnType<typeof createServer>): Promise<number> {
-   await new Promise<void>((resolve, reject) => {
-@@ -125,7 +153,12 @@ try {
+@@ -125,7 +151,12 @@ try {
      models: [],
    }, 0);
  
