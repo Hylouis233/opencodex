@@ -1,9 +1,10 @@
 diff --git a/tests/fixtures/provider-outbound-e2e.ts b/tests/fixtures/provider-outbound-e2e.ts
-index 55f9ef2..fd466b2 100644
+index 55f9ef2..de187c9 100644
 --- a/tests/fixtures/provider-outbound-e2e.ts
 +++ b/tests/fixtures/provider-outbound-e2e.ts
-@@ -1,14 +1,40 @@
+@@ -1,14 +1,42 @@
 +import { mock } from "bun:test";
++import * as dns from "node:dns/promises";
  import { createServer } from "node:http";
  import type { AddressInfo } from "node:net";
 -import { saveConfig } from "../../src/config";
@@ -26,6 +27,7 @@ index 55f9ef2..fd466b2 100644
 +const dnsLookups: string[] = [];
 +const unexpectedDnsLookups: string[] = [];
 +mock.module("node:dns/promises", () => ({
++  ...dns,
 +  lookup: async (hostname: string) => {
 +    dnsLookups.push(hostname);
 +    if (!proxyHostnames.has(hostname)) unexpectedDnsLookups.push(hostname);
@@ -48,7 +50,7 @@ index 55f9ef2..fd466b2 100644
  
  async function listen(server: ReturnType<typeof createServer>): Promise<number> {
    await new Promise<void>((resolve, reject) => {
-@@ -125,7 +151,12 @@ try {
+@@ -125,7 +153,12 @@ try {
      models: [],
    }, 0);
  
