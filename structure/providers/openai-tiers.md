@@ -311,7 +311,8 @@ opt-in main-account hard lock retains its explicit local admission policy.
 Credit parsing, expiry, partial updates and reset-ticket separation are covered in
 `tests/codex-integration/codex-quota-parser-parity.test.ts`; selection and bulk-pause behavior
 are covered in `tests/codex-integration/codex-routing.test.ts` and
-`tests/codex-integration/codex-auth-api.test.ts`.
+`tests/codex-integration/codex-auth-api.test.ts` and
+`tests/codex-integration/codex-cooldown-recovery.test.ts`.
 
 ### Short-window retention
 
