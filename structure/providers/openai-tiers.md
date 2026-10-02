@@ -302,11 +302,14 @@ WHAM `credits` is spendable usage capacity, separate from manually redeemed
 and a separate observation clock. Explicit zero/null replaces earlier evidence; partial usage
 headers retain its original clock. A positive balance with `has_credits`, or unlimited credits,
 can keep an account selectable at 100% included usage for five minutes. Explicit upstream
-refusal or an overage limit always defeats that credit evidence. Selection caps its usage score
-at 99 so accounts with more included headroom remain preferred; observed percentage bars stay
+refusal or an overage limit always defeats that credit evidence. A fresh explicit refusal
+retracts cached credit eligibility even if that response omits the credit summary. Selection caps
+its usage score at 99 so accounts with more included headroom remain preferred; observed percentage bars stay
 unchanged. Bulk pause and complete-snapshot recovery use the same credit decision. Credits-only
 payloads cannot clear cooldowns, actual request refusals still drive cooldown/failover, and the
 opt-in main-account hard lock retains its explicit local admission policy.
+Internal credit evidence is removed from account quota DTOs; credit display still requires the
+existing explicit `showCodexCredits` opt-in.
 
 Credit parsing, expiry, partial updates and reset-ticket separation are covered in
 `tests/codex-integration/codex-quota-parser-parity.test.ts`; selection and bulk-pause behavior

@@ -99,10 +99,12 @@ describe("main credits publication", () => {
     const cfg = config();
     const off = await listCodexAuthAccounts(cfg, true);
     expect(off[0].credits).toBeUndefined();
+    expect(off[0].quota?.credits).toBeUndefined();
     cfg.showCodexCredits = true;
     rememberCodexCredits("removed-pool", "removed-identity", { balance: "11" });
     const on = await listCodexAuthAccounts(cfg);
     expect(on[0].credits).toEqual({ balance: "24.5" });
+    expect(on[0].quota?.credits).toBeUndefined();
     expect(codexCreditsFor("removed-pool", "removed-identity")).toBeUndefined();
     writeMain("fixture-new-bearer", "fixture-new-identity");
     globalThis.fetch = (async () => Response.json({})) as typeof fetch;
@@ -111,11 +113,29 @@ describe("main credits publication", () => {
 });
 
 describe("pool credits publication", () => {
-  test("credits-only response publishes without quota and DTO follows the switch", async () => {
+  test.each([undefined, "pro", "plus", "free", "go"])("routing credits never bypass DTO visibility for plan %s", async plan => {
+    savePool();
+    const result = await commitPoolQuotaResponse(Response.json({
+      plan_type: plan,
+      rate_limit: { allowed: true, primary_window: { used_percent: 100, limit_window_seconds: 604800 } },
+      credits: { has_credits: true, unlimited: false, balance: "7.125" },
+    }), poolContext());
+    const cfg = config();
+    const row = { ...account, plan };
+    for (const showCodexCredits of [undefined, false, true]) {
+      const dto = poolAccountDto({ ...cfg, showCodexCredits }, row, result, true, false, 0, false);
+      expect(dto.quota?.credits).toBeUndefined();
+      expect(dto.credits).toEqual(showCodexCredits === true
+        ? { hasCredits: true, unlimited: false, balance: "7.125" } : undefined);
+    }
+    expect(result.quota?.credits?.balance).toBe(7.125);
+  });
+  test("credits-only response publishes without usage windows and DTO follows the switch", async () => {
     savePool();
     const ctx = poolContext();
     const result = await commitPoolQuotaResponse(Response.json({ credits: { balance: "7.125" } }), ctx);
-    expect(result.quota).toBeNull();
+    expect(result.quota).toMatchObject({ credits: { balance: 7.125 } });
+    expect(result.quota?.weeklyPercent).toBeUndefined();
     expect(ctx.poolWriter).toBeDefined();
     const cfg = config();
     expect(poolAccountDto(cfg, account, result, true, false, 0, false).credits).toBeUndefined();

@@ -39,8 +39,10 @@ export function quotaForPlan<T extends Omit<StoredAccountQuota, "updatedAt"> | S
   plan: unknown,
 ): T | null {
   const visible = withoutRetiredCodexQuota(quota);
-  if (!visible || !isThirtyDayOnlyCodexPlan(plan)) return visible;
-  const quotaWindows = visible;
+  if (!visible) return visible;
+  // Routing credit evidence is private; only the separate opt-in display DTO exposes credits.
+  const { credits: _routingCredits, ...quotaWindows } = visible;
+  if (!isThirtyDayOnlyCodexPlan(plan)) return quotaWindows as T;
   return {
     ...(quotaWindows.monthlyPercent !== undefined ? { monthlyPercent: quotaWindows.monthlyPercent } : {}),
     ...(quotaWindows.monthlyResetAt !== undefined ? { monthlyResetAt: quotaWindows.monthlyResetAt } : {}),

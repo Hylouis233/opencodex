@@ -281,7 +281,7 @@ materialized headers pass the proxy-credential exclusion check before owner matc
 
 The credits module beside `src/codex/quota-types.ts` retains validated WHAM credits only in process memory. Main publication uses the current credential and physical ChatGPT account identity; pool publication uses the captured writer's `quotaHistoryIdentity` and a live credential generation, including credits-only responses. Omitted credits retain the observation; null or unusable credits clear it. Identity mismatch or removal retires it, without a TTL or disk hydration.
 
-`src/codex/auth-api/account-list.ts` exposes optional `credits` only when `showCodexCredits === true` and the current identity has an observation. Decimal balances remain strings; boolean flags and approximate local/cloud message ranges are allowlisted. Credits never enter persisted quota, routing, reset-credit recovery, or `/api/provider-quotas`, and are never logged. The [config surface](../config.md#config-surface) owns the display switch.
+`src/codex/auth-api/account-list.ts` exposes optional `credits` only when `showCodexCredits === true` and the current identity has an observation. Decimal balances remain strings; boolean flags and approximate local/cloud message ranges are allowlisted. These display observations never enter persisted quota, routing, reset-credit recovery, or `/api/provider-quotas`, and are never logged. Separate normalized [spendable-credit evidence](openai-tiers.md#spendable-codex-credits) may inform routing, but is stripped from account quota DTOs for every plan; it cannot bypass this display opt-in. The [config surface](../config.md#config-surface) owns the display switch.
 
 ## Quota history publication identity
 

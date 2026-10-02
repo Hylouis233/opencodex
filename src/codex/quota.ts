@@ -913,6 +913,8 @@ export function parseUsageQuota(data: WhamUsageResponse): Omit<StoredAccountQuot
 
   const quota: Omit<StoredAccountQuota, "updatedAt"> = {};
   if (resetCredits !== undefined) quota.resetCredits = resetCredits;
+  // A fresh refusal retracts cached credit eligibility even when the balance is omitted.
+  if (data.rate_limit?.allowed === false) quota.credits = null;
   if (data.credits !== undefined) {
     quota.credits = null;
     if (data.credits && typeof data.credits === "object" && !Array.isArray(data.credits)) {

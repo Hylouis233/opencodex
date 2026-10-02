@@ -51,6 +51,26 @@ describe("consumable credits at an included usage limit", () => {
     expect(isCodexQuotaExhausted(parseUsageQuota(wham(available, false)), "pro")).toBe(true);
   });
 
+  it.each([true, false])("retracts older credit eligibility on a refusal without credits (windows=%s)", withWindows => {
+    clearAccountQuota("paid-refused");
+    setAccountQuotaFromParsed("paid-refused", parseUsageQuota(wham(available)));
+    const refusal = parseUsageQuota({
+      rate_limit: {
+        allowed: false,
+        ...(withWindows ? { primary_window: { used_percent: 100, limit_window_seconds: 604800 } } : {}),
+      },
+    });
+    expect(refusal?.credits).toBeNull();
+    expect(isCompleteCodexQuotaRecoverySnapshot(refusal, "pro")).toBe(false);
+    setAccountQuotaFromParsed("paid-refused", refusal);
+    const stored = getAccountQuota("paid-refused");
+    expect(stored?.weeklyPercent).toBe(100);
+    expect(stored?.credits).toBeNull();
+    expect(isCodexQuotaExhausted(stored, "pro")).toBe(true);
+    expect(computeCodexUsageScore(stored, "pro")).toBe(100);
+    clearAccountQuota("paid-refused");
+  });
+
   it("reset tickets alone do not grant automatic spending headroom", () => {
     const data = wham(null);
     data.rate_limit_reset_credits = { available_count: 3 };
