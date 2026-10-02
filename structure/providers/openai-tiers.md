@@ -295,6 +295,26 @@ refusal, so the two predicates can never both hold.
 
 ### Quota cache and short-window history
 
+### Spendable Codex credits
+
+WHAM `credits` is spendable usage capacity, separate from manually redeemed
+`rate_limit_reset_credits`. The quota store keeps normalized flags, a finite nonnegative balance,
+and a separate observation clock. Explicit zero/null replaces earlier evidence; partial usage
+headers retain its original clock. A positive balance with `has_credits`, or unlimited credits,
+can keep an account selectable at 100% included usage for five minutes. Explicit upstream
+refusal or an overage limit always defeats that credit evidence. Selection caps its usage score
+at 99 so accounts with more included headroom remain preferred; observed percentage bars stay
+unchanged. Bulk pause and complete-snapshot recovery use the same credit decision. Credits-only
+payloads cannot clear cooldowns, actual request refusals still drive cooldown/failover, and the
+opt-in main-account hard lock retains its explicit local admission policy.
+
+Credit parsing, expiry, partial updates and reset-ticket separation are covered in
+`tests/codex-integration/codex-quota-parser-parity.test.ts`; selection and bulk-pause behavior
+are covered in `tests/codex-integration/codex-routing.test.ts` and
+`tests/codex-integration/codex-auth-api.test.ts`.
+
+### Short-window retention
+
 `src/codex/quota.ts` drops an omitted account-level short tuple from the display/rotation
 cache when its stored reset instant has elapsed. Seconds and milliseconds are accepted;
 future or missing deadlines remain carried, and explicit incoming short readings remain stored.

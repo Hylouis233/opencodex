@@ -3,12 +3,88 @@ import {
   clearAccountQuota,
   applyAccountQuotaFromUpstreamHeaders,
   getAccountQuota,
+  isCodexQuotaExhausted,
+  isCompleteCodexQuotaRecoverySnapshot,
   parseUpstreamQuotaHeaders,
   parseUsageQuota,
   setAccountQuotaFromParsed,
   updateAccountQuota,
 } from "../../src/codex/quota";
 import { codexPoolQuotaEvidence } from "../../src/routing/quota";
+import { computeCodexUsageScore } from "../../src/codex/routing/cooldown-math";
+import type { WhamUsageResponse } from "../../src/codex/quota";
+
+describe("consumable credits at an included usage limit", () => {
+  const wham = (credits: unknown, allowed = true): WhamUsageResponse => ({
+    plan_type: "pro",
+    rate_limit: { allowed, primary_window: { used_percent: 100, limit_window_seconds: 604800 } },
+    rate_limit_reset_credits: { available_count: 0 },
+    credits,
+  } as WhamUsageResponse);
+  const available = { has_credits: true, unlimited: false, overage_limit_reached: false, balance: "42.5" };
+
+  it("parses spendable balance separately from reset tickets and keeps a full account selectable", () => {
+    const quota = parseUsageQuota(wham(available))!;
+    expect(quota).toMatchObject({ weeklyPercent: 100, resetCredits: 0, credits: { balance: 42.5 } });
+    expect(isCodexQuotaExhausted(quota, "pro")).toBe(false);
+    expect(computeCodexUsageScore(quota, "pro")).toBe(99);
+    expect(isCompleteCodexQuotaRecoverySnapshot(quota, "pro")).toBe(true);
+  });
+
+  it("supports unlimited credits without inventing a numeric balance", () => {
+    const quota = parseUsageQuota(wham({ has_credits: true, unlimited: true, balance: null }))!;
+    expect(isCodexQuotaExhausted(quota, "pro")).toBe(false);
+  });
+
+  it.each([
+    null, {}, { ...available, balance: "0" }, { ...available, balance: "-1" },
+    { ...available, balance: "NaN" }, { ...available, balance: "Infinity" },
+    { ...available, balance: true }, { ...available, has_credits: false },
+    { ...available, overage_limit_reached: true },
+  ])("does not override exhaustion with unavailable or invalid credits: %j", credits => {
+    const quota = parseUsageQuota(wham(credits))!;
+    expect(isCodexQuotaExhausted(quota, "pro")).toBe(true);
+    expect(computeCodexUsageScore(quota, "pro")).toBe(100);
+  });
+
+  it("honors an explicit upstream refusal even with a positive balance", () => {
+    expect(isCodexQuotaExhausted(parseUsageQuota(wham(available, false)), "pro")).toBe(true);
+  });
+
+  it("reset tickets alone do not grant automatic spending headroom", () => {
+    const data = wham(null);
+    data.rate_limit_reset_credits = { available_count: 3 };
+    expect(isCodexQuotaExhausted(parseUsageQuota(data), "pro")).toBe(true);
+  });
+
+  it("credits-only payloads cannot clear a quota cooldown", () => {
+    const quota = parseUsageQuota({ credits: available } as WhamUsageResponse)!;
+    expect(quota).toMatchObject({ credits: { balance: 42.5 } });
+    expect(isCompleteCodexQuotaRecoverySnapshot(quota, "pro")).toBe(false);
+    expect(computeCodexUsageScore(quota, "pro")).toBe(101);
+  });
+
+  it("partial usage headers preserve the credit clock; explicit null and zero retract it", () => {
+    clearAccountQuota();
+    const parsed = parseUsageQuota(wham(available))!;
+    setAccountQuotaFromParsed("paid-partial", parsed);
+    applyAccountQuotaFromUpstreamHeaders("paid-partial", new Headers({ "x-codex-primary-used-percent": "100" }));
+    expect(getAccountQuota("paid-partial")?.credits).toEqual(parsed.credits);
+    updateAccountQuota("paid-partial", 100);
+    expect(getAccountQuota("paid-partial")?.credits).toEqual(parsed.credits);
+    const expired = { ...parsed, credits: { ...parsed.credits!, observedAt: Date.now() - 300001 } };
+    expect(isCodexQuotaExhausted(expired, "pro")).toBe(true);
+    expect(computeCodexUsageScore(expired, "pro")).toBe(100);
+    setAccountQuotaFromParsed("paid-partial", parseUsageQuota(wham({ ...available, balance: "0" })));
+    expect(isCodexQuotaExhausted(getAccountQuota("paid-partial"), "pro")).toBe(true);
+    setAccountQuotaFromParsed("paid-partial", parsed);
+    setAccountQuotaFromParsed("paid-partial", parseUsageQuota(wham(null)));
+    expect(getAccountQuota("paid-partial")?.credits).toBeNull();
+    clearAccountQuota("paid-partial");
+    setAccountQuotaFromParsed("paid-partial", { weeklyPercent: 100 });
+    expect(getAccountQuota("paid-partial")?.credits).toBeUndefined();
+  });
+});
 
 describe("retired and generic quota partial updates", () => {
   it.each([1, 1000])("legacy quota updates expire short reset units (divisor %s)", divisor => {

@@ -795,6 +795,14 @@ Use `ocx provider add mine --adapter openai-chat --base-url https://example.com/
 
 ### Cached quota history
 
+Automatic OpenAI account exhaustion checks distinguish purchased usage credits from reset
+tickets. A fresh positive spendable balance or unlimited credits can keep an account eligible
+after its included usage reaches 100%; an explicit upstream refusal or overage limit still
+blocks that evidence. Credit evidence expires after five minutes, and usage headers do not
+renew its clock. `pause-exhausted` uses this rule. Reset tickets alone never grant automatic
+headroom, and a credits-only response cannot clear a request cooldown. The opt-in main-account
+hard lock remains a separate local policy.
+
 `ocx account history openai <pool-account-id> [--limit 1-200] [--json]` reads stored observations without contacting the provider. The output separates actual observation time, WHAM or response-header source, window family and usage percentage. At most 200 observations per account are retained for 30 days, with global storage bounds.
 
 Ordinary token refresh preserves history. Reauthentication, removal or account replacement retires the old publication. Native main and probes performed before a login is published are not included. Missing history means insufficient observations, not zero usage. This command does not spend quota. Effective estimates, when supported by observations, carry the limitations below.

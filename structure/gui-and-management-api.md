@@ -561,3 +561,5 @@ keep their existing no-catalog-refresh behavior. The regression suite is
 > Decision record: [Durable provider PATCH](decisions/ADR-0104-durable-provider-patch.md)
 
 > Decision record: [Publication-aware rollback](decisions/ADR-0120-provider-patch-publication-boundary.md)
+
+Automatic account exhaustion and recovery use the [spendable Codex credit evidence contract](providers/openai-tiers.md#spendable-codex-credits), including independent freshness, upstream refusal, and reset-ticket separation.

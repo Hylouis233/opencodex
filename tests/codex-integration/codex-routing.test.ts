@@ -471,6 +471,22 @@ describe("codex routing", () => {
     expect(resolveCodexAccountForThread("new-thread", config)).toBe("b");
   });
 
+  test("a paid account remains bound at 100% but real cooldowns still select an alternate", () => {
+    const config = makeConfig({ autoSwitchThreshold: 99 });
+    updateAccountQuota("a", 99);
+    updateAccountQuota("b", 100);
+    expect(resolveCodexAccountForThread("paid-affinity", config)).toBe("a");
+    setAccountQuotaFromParsed("a", parseUsageQuota({
+      rate_limit: { allowed: true, primary_window: { used_percent: 100, limit_window_seconds: 604800 } },
+      credits: { has_credits: true, unlimited: false, balance: "42.5" },
+    }));
+    expect(resolveCodexAccountForThread("paid-affinity", config)).toBe("a");
+    updateAccountQuota("b", 30);
+    expect(resolveCodexAccountForThread("new-included-capacity", config)).toBe("b");
+    recordCodexUpstreamOutcome(config, "a", 429, { retryAfter: "60" });
+    expect(resolveCodexAccountForThread("paid-affinity", config)).toBe("b");
+  });
+
   test("known 100% weekly usage is exhausted, not unknown, and switches accounts", () => {
     const config = makeConfig();
     updateAccountQuota("a", 100);

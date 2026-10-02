@@ -375,7 +375,7 @@ A withheld token carries its own cause into the reported `reason` through
 fingerprint mismatch are named separately rather than all reported as a missing data key.
 
 Codex display-cache expiry, retained blocking main-policy evidence, and reset history follow the
-[quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history).
+[quota cache contract](providers/openai-tiers.md#quota-cache-and-short-window-history); automatic exhaustion and recovery also use [spendable credit evidence](providers/openai-tiers.md#spendable-codex-credits).
 
 Usage consumers preserve positive incomplete-history metadata as specified in
 [usage accounting](dashboard-and-usage.md#usage-accounting); readable totals are not represented
