@@ -73,6 +73,7 @@ Per-vendor contracts and the adapter authority that constructs them.
 | [`providers/oauth-reconciliation.md`](providers/oauth-reconciliation.md) | Operator limits and per-model declarations across startup reconciliation and OAuth upsert. |
 | [`providers/claude-cli-replay.md`](providers/claude-cli-replay.md) | Claude CLI stable replay, canonical tool schemas, capture-only client tool ownership and subscription usage admission. |
 | [`providers-and-adapters.md`](providers-and-adapters.md) | Provider and adapter selection, the adapter inventory, live model discovery, and the hosted-search continuation bridge. |
+| [`providers/step-cli-transport.md`](providers/step-cli-transport.md) | StepCode as a Step Plan transport: its own framed stdio wire, one process per conversation, inline SDK tools instead of an MCP catalog, and the bounded tool-result window. |
 | [`providers/jev-decision.md`](providers/jev-decision.md) | JEV Combo decision methods (TypeSafe, self-hosted System One rows, opencodex models), the decision request path, dashboard surfaces, and the content-free statistics projection. |
 | [`providers/anthropic-key-billing.md`](providers/anthropic-key-billing.md) | Exact billing refusal evidence, immutable physical credential ownership, pacing provenance and bounded pre-output key recovery. |
 | [`providers/dsh-account.md`](providers/dsh-account.md) | Explicit read-only DSH credential import, verified account identity, disabled refresh, pinned inference and probe destinations, and authoritative-empty quota. |
@@ -89,7 +90,6 @@ Per-vendor contracts and the adapter authority that constructs them.
 | [`adapters/registry.md`](adapters/registry.md) | The single adapter construction authority and contract inheritance. |
 | [`adapters/compatibility-contracts.md`](adapters/compatibility-contracts.md) | Versioned provider compatibility claims and fixture-evidence boundaries. |
 | [`adapters/compatibility-lab.md`](adapters/compatibility-lab.md) | Optional Lab evidence, automation, and its core-runtime isolation boundary. |
-| [`providers/step-cli-transport.md`](providers/step-cli-transport.md) | StepCode as a Step Plan transport: its own framed stdio wire, one process per conversation, inline SDK tools instead of an MCP catalog, and the bounded tool-result window. |
 
 ### Tier 5 — Surfaces and clients
 
