@@ -52,7 +52,11 @@
       "tier": 4,
       "title": "Generic OAuth Account Pool",
       "scope": "Opt-in conversation ownership, request-local selection receipts and bounded release for generic OAuth pools.",
-      "documents": ["src/oauth/", "src/server/", "src/types/"]
+      "documents": [
+        "src/oauth/",
+        "src/server/",
+        "src/types/"
+      ]
     },
     {
       "path": "overview.md",
@@ -131,7 +135,10 @@
       "tier": 2,
       "title": "Custom Codex Provider Routing",
       "scope": "Explicit provider-ID routing consent, URL-only publication and recovery.",
-      "documents": ["src/codex/provider-routing.ts", "src/cli/codex-provider.ts"]
+      "documents": [
+        "src/codex/provider-routing.ts",
+        "src/cli/codex-provider.ts"
+      ]
     },
     {
       "path": "codex-home.md",
@@ -201,7 +208,10 @@
       "tier": 2,
       "title": "Effort-clamp observations",
       "scope": "Persisted effort-clamp observation identity and idempotent sync notices.",
-      "documents": ["src/codex/runtime.ts", "src/codex/catalog/effort.ts"]
+      "documents": [
+        "src/codex/runtime.ts",
+        "src/codex/catalog/effort.ts"
+      ]
     },
     {
       "path": "subagents.md",
@@ -382,7 +392,16 @@
       "tier": 4,
       "title": "Anthropic progress updates",
       "scope": "Opus 5.5 progress display, visible commentary, and exact signed-block replay.",
-      "documents": ["src/adapters/", "src/bridge/", "src/responses/", "src/claude/", "src/types/", "src/server/", "src/web-search/", "src/images/"]
+      "documents": [
+        "src/adapters/",
+        "src/bridge/",
+        "src/responses/",
+        "src/claude/",
+        "src/types/",
+        "src/server/",
+        "src/web-search/",
+        "src/images/"
+      ]
     },
     {
       "path": "providers/anthropic-account-thresholds.md",
@@ -398,21 +417,30 @@
       "tier": 4,
       "title": "Meta Muse Login",
       "scope": "CLI credential import, approval lifecycle, explicit recovery and account-free login diagnostics.",
-      "documents": ["src/oauth/meta-muse.ts", "src/oauth/meta-muse-keychain.ts", "src/oauth/meta-muse-errors.ts", "src/oauth/login-cli.ts"]
+      "documents": [
+        "src/oauth/meta-muse.ts",
+        "src/oauth/meta-muse-keychain.ts",
+        "src/oauth/meta-muse-errors.ts",
+        "src/oauth/login-cli.ts"
+      ]
     },
     {
       "path": "providers/oauth-reconciliation.md",
       "tier": 4,
       "title": "OAuth Preset Reconciliation",
       "scope": "Operator limits and per-model declarations across startup reconciliation and OAuth upsert.",
-      "documents": ["src/oauth/"]
+      "documents": [
+        "src/oauth/"
+      ]
     },
     {
       "path": "providers/claude-cli-replay.md",
       "tier": 4,
       "title": "Claude CLI Replay",
       "scope": "Claude CLI stable replay, canonical tool schemas, capture-only client tool ownership and subscription usage admission.",
-      "documents": ["src/adapters/"]
+      "documents": [
+        "src/adapters/"
+      ]
     },
     {
       "path": "providers-and-adapters.md",
@@ -484,7 +512,10 @@
       "tier": 4,
       "title": "OAuth Code-Display Login",
       "scope": "Headless code-display OAuth login: flow ownership, expiry, unsupported providers, single-operator store.",
-      "documents": ["src/oauth/", "src/server/management/"]
+      "documents": [
+        "src/oauth/",
+        "src/server/management/"
+      ]
     },
     {
       "path": "providers/openai-tiers.md",
@@ -510,7 +541,12 @@
       "tier": 4,
       "title": "Preserve Signed-In Codex Quota",
       "scope": "Opt-in effective priority bands that spend other pool accounts before the signed-in identity, its identity observation and management API.",
-      "documents": ["src/codex/account-preservation.ts", "src/codex/signed-in-identity.ts", "src/codex/auth-api/account-preservation.ts", "src/cli/account-preservation.ts"]
+      "documents": [
+        "src/codex/account-preservation.ts",
+        "src/codex/signed-in-identity.ts",
+        "src/codex/auth-api/account-preservation.ts",
+        "src/cli/account-preservation.ts"
+      ]
     },
     {
       "path": "providers/cursor.md",
@@ -665,7 +701,10 @@
       "tier": 5,
       "title": "Codex Desktop Compatibility",
       "scope": "Windows package activation, restart context, and protected compatibility authority persistence.",
-      "documents": ["src/codex/", "src/cli/"]
+      "documents": [
+        "src/codex/",
+        "src/cli/"
+      ]
     },
     {
       "path": "clients/chatgpt-desktop.md",
@@ -763,7 +802,9 @@
       "tier": 6,
       "title": "Managed Service Logging",
       "scope": "Service-only console timestamps and bounded copy-truncate log retention.",
-      "documents": ["src/service/logging.ts"]
+      "documents": [
+        "src/service/logging.ts"
+      ]
     },
     {
       "path": "ops/service-health-recovery.md",
@@ -887,6 +928,15 @@
       "scope": "Test-runner home and case-scoped lifecycle teardown ordering.",
       "documents": [
         "tests/"
+      ]
+    },
+    {
+      "path": "providers/step-cli-transport.md",
+      "tier": 4,
+      "title": "StepCode CLI Transport",
+      "scope": "StepCode as a Step Plan transport: its own framed stdio wire, one process per conversation, inline SDK tools instead of an MCP catalog, and the bounded tool-result window.",
+      "documents": [
+        "src/adapters/step-cli/"
       ]
     }
   ],
