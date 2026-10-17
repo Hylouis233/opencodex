@@ -1343,6 +1343,13 @@ StepCode:
   CLI's own tool-result window and the turn reports `step_cli_tool_result_too_late`; and the CLI's
   session system prompt cannot be replaced through this protocol, so your instructions are prepended
   to the turn rather than installed as the system prompt.
+- **Tool-catalog ceiling:** this row shares the CLI family's **128-tool / 2 MiB** limit. A real Codex
+  client can exceed it, because Codex flattens every MCP server's tools into the function catalog —
+  measured on Codex 0.162.0 at 1749 tools / 2.5 MB. The turn is refused rather than silently trimmed
+  (a tool the client thinks exists but that never reaches the model is worse), and the error names both
+  numbers. A stock Codex install without MCP servers carries roughly ten built-in tools and works; if you
+  hit the ceiling, disable or narrow MCP servers for this provider. `qoder`, `codebuddy` and
+  `claude-cli` enforce the same bound.
 - **Input media:** the row publishes text-only models. `step-5-preview` and `step-3.7-flash` accept
   images upstream, but no headless StepCode turn has been shown to hand image bytes to the model, so
   an image sent straight to this provider is refused (`unsupported_input_modality`). With the vision
