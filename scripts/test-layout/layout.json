@@ -2311,6 +2311,7 @@
     "step-cli-provider.test.ts": "providers",
     "step-cli-frames.test.ts": "adapters",
     "step-cli-tool-bridge.test.ts": "adapters",
-    "step-cli-session.test.ts": "adapters"
+    "step-cli-session.test.ts": "adapters",
+    "step-cli-tool-result.test.ts": "adapters"
   }
 }
