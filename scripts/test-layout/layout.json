@@ -394,6 +394,7 @@
     "claude-cli-efficiency.test.ts": "providers",
     "step-cli-frames.test.ts": "adapters",
     "step-cli-conversation.test.ts": "adapters",
+    "step-cli-run-turn.test.ts": "adapters",
     "step-cli-session.test.ts": "adapters",
     "step-cli-tool-bridge.test.ts": "adapters",
     "step-cli-tool-result.test.ts": "adapters",
