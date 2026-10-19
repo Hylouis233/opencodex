@@ -1,3 +1,6 @@
+import { captureAnthropicRejectionPayloads, keepAnthropicReplayBlock } from "./anthropic-rejection-memo";
+import { anthropicDeclaredTools } from "./anthropic-tool-catalog";
+import { anthropicReplayContent, createAnthropicReplayCapture } from "./anthropic-replay";
 import { withAnthropicProgressUpdates } from "./anthropic-progress";
 import type { IncomingMeta, ProviderAdapter } from "./base";
 import { createAdapterTierMetadata, type AdapterTierMetadata } from "../providers/fastwire";
@@ -17,7 +20,7 @@ import type {
   OcxToolResultMessage,
   OcxUsage,
 } from "../types";
-import { isAllowedToolChoice, namespacedToolName, resolveToolChoiceWireName, toolChoiceToolPredicate } from "../types";
+import { isAllowedToolChoice, namespacedToolName, resolveToolChoiceWireName } from "../types";
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM_INSTRUCTION, applyClaudeToolPrefix, stripClaudeToolPrefix } from "../oauth/anthropic";
 import { parseDataUrl } from "./image";
 import { enforceAnthropicImageLimits } from "./anthropic-image-guard";
@@ -32,6 +35,7 @@ import { decodeServerSentEvents } from "../lib/sse-decoder";
 import { isTranslatorBudgetExceededError, retainTranslatedEventBatch, type TranslatorBudget } from "../lib/translator-budget";
 import { isReasoningEffortOmitted, modelRecordValue } from "../reasoning-effort";
 import { applyAgentRouterLanguageFraming, isAgentRouterEndpoint } from "./agentrouter";
+import { anthropicCacheWrite1hTokens, resolveAnthropicCacheRetention, type AnthropicCacheRetention } from "./anthropic/cache-retention";
 import { claudeFamilyVersion, rejectsCombinedSampling, rejectsForcedToolChoice, rejectsSamplingParameters, supportsExplicitThinkingDisable, usesAdaptiveThinking, usesBetweenToolsFloor } from "./anthropic-model-contract";
 
 /** Map a user content part to an Anthropic content block (text or image source). */
@@ -73,8 +77,12 @@ const COMPAT_TOOL_PREFIX = "cx_";
 type CacheControl = { type: "ephemeral"; ttl?: "1h" | "5m" };
 const MAX_CACHE_BREAKPOINTS = 4;
 
-function resolveCacheControl(retention: "none" | "short" | "long" | undefined): CacheControl | undefined {
-  const r = retention ?? "short";
+/** Omitted retention follows the destination default (1h on first-party Anthropic, else 5m). */
+function resolveCacheControl(
+  retention: AnthropicCacheRetention | undefined,
+  provider: OcxProviderConfig,
+): CacheControl | undefined {
+  const r = resolveAnthropicCacheRetention(retention, provider);
   if (r === "none") return undefined;
   return r === "long" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
 }
@@ -283,7 +291,7 @@ function normalizeTtlOrdering(body: Record<string, unknown>): void {
   }
 }
 
-function isLikelyRealAnthropicThinkingSignature(signature: string | undefined): signature is string {
+export function isLikelyRealAnthropicThinkingSignature(signature: string | undefined): signature is string {
   if (typeof signature !== "string" || signature.length < 16) return false;
   if (/^(fc|call|msg|rs|resp|reasoning|item|ws|tool|func|function)[-_]/i.test(signature)) return false;
   return /^[A-Za-z0-9+/_=-]+$/.test(signature);
@@ -640,6 +648,7 @@ function usageFromAnthropic(usage: unknown): OcxUsage | undefined {
   // estimate from visible summaries. Invalid optional detail leaves totals intact.
   const thinking = isAnthropicRecord(usage.output_tokens_details) ? usage.output_tokens_details.thinking_tokens : undefined;
   const reasoningOutputTokens = typeof thinking === "number" && Number.isFinite(thinking) && thinking >= 0 && thinking <= output ? thinking : undefined;
+  const write1h = anthropicCacheWrite1hTokens(usage, write);
   return {
     inputTokens,
     outputTokens: output,
@@ -648,6 +657,7 @@ function usageFromAnthropic(usage: unknown): OcxUsage | undefined {
       cachedInputTokens: read,
       cacheReadInputTokens: read,
       cacheCreationInputTokens: write,
+      ...(write1h !== undefined ? { cacheCreation1hInputTokens: write1h } : {}),
     } : {}),
   };
 }
@@ -759,8 +769,8 @@ function messagesToAnthropicFormat(
     }
   }
   const toolCatalogNudge = buildNonOpenAIToolCatalogNudgeForTools(
-    parsed.context.tools,
-    parsed.options.toolChoice,
+    anthropicDeclaredTools(parsed),
+    undefined,
     tool => toolNames.toWire(namespacedToolName(tool.namespace, tool.name)),
   );
   const systemParts = [...(parsed.context.systemPrompt ?? []), ...(toolCatalogNudge ? [toolCatalogNudge] : [])];
@@ -790,6 +800,7 @@ function messagesToAnthropicFormat(
       case "assistant": {
         const aMsg = msg as OcxAssistantMessage;
         const preface: unknown[] = [];
+
         const toolUses: unknown[] = [];
         const originalOrder: unknown[] = [];
         const appendPreface = (block: unknown) => { preface.push(block); originalOrder.push(block); };
@@ -838,9 +849,15 @@ function messagesToAnthropicFormat(
         }
         // Anthropic treats text/thinking after tool_use as ending the tool turn, which makes
         // earlier tool_use ids look unpaired (#620 / common multi-step history shape).
-        // Signed native blocks bind the source ordering, including updates between tool calls.
-        // Keep the legacy repair only for unsigned/cross-provider history.
-        const content = signed ? originalOrder : [...preface, ...toolUses];
+        const captured = anthropicReplayContent(aMsg);
+        if (captured) {
+          const expected = toolUses as Array<{ id: string; name: string }>;
+          const actual = captured.filter(block => block.type === "tool_use");
+          if (actual.length !== expected.length || actual.some((block, index) => block.id !== expected[index]?.id || block.name !== expected[index]?.name)) {
+            throw new Error("Anthropic search replay tool identity changed");
+          }
+        }
+        const content = (captured ?? (signed ? originalOrder : [...preface, ...toolUses])).filter(block => keepAnthropicReplayBlock(parsed, block as Record<string, unknown>));
         if (content.length === 0) break;
         messages.push({ role: "assistant", content });
         if (toolUseIds.length > 0) {
@@ -903,9 +920,7 @@ function messagesToAnthropicFormat(
 
 function toolsToAnthropicFormat(parsed: OcxParsedRequest, toolNames: { toWire: (name: string) => string }): unknown[] | undefined {
   if (!parsed.context.tools || parsed.context.tools.length === 0) return undefined;
-  const tools = isAllowedToolChoice(parsed.options.toolChoice)
-    ? parsed.context.tools.filter(toolChoiceToolPredicate(parsed.options.toolChoice, parsed.context.tools))
-    : parsed.context.tools;
+  const tools = anthropicDeclaredTools(parsed);
   if (tools.length === 0) return undefined;
   const converted = tools.map(t => ({
     name: toolNames.toWire(namespacedToolName(t.namespace, t.name)),
@@ -1215,7 +1230,7 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
 
       // Prompt caching: native Anthropic supports top-level automatic caching, which
       // follows the moving final block across turns. Keep one breakpoint slot free for it.
-      const cc = resolveCacheControl(cacheRetention);
+      const cc = resolveCacheControl(cacheRetention, provider);
       const automaticPromptCaching = cc && usesNativeAnthropicEndpoint(provider);
       if (automaticPromptCaching) body.cache_control = cc;
       const explicitLimit = automaticPromptCaching ? MAX_CACHE_BREAKPOINTS - 1 : MAX_CACHE_BREAKPOINTS;
@@ -1226,7 +1241,7 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
       enforceCacheControlLimit(body, explicitLimit);
       normalizeTtlOrdering(body);
 
-      return {
+      const request = {
         url,
         method: "POST",
         headers,
@@ -1240,6 +1255,8 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
           fastSpeed?.value ?? null,
         ),
       };
+      captureAnthropicRejectionPayloads(request, body, incoming?.translatorBudget);
+      return request;
     },
 
     async *parseStream(
@@ -1252,6 +1269,7 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
         return;
       }
 
+      const replayCapture = createAnthropicReplayCapture(response, budget);
       const budgetEncoder = new TextEncoder();
       let currentBlockType = "";
       let currentToolCallId = "";
@@ -1286,11 +1304,13 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
           yield anthropicContentFilterIncomplete(pendingStopReason, usageFromAnthropic(pendingUsage));
           return;
         }
-        yield {
+        const done: AdapterEvent = {
           type: "done",
           usage: usageFromAnthropic(pendingUsage),
           ...(pendingStopReason ? { stopReason: pendingStopReason } : {}),
         };
+        replayCapture?.finish(done);
+        yield done;
       };
 
       try {
@@ -1310,6 +1330,7 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
         try {
           parsed = JSON.parse(payload);
         } catch {
+          replayCapture?.invalidate();
           debugDroppedFrame("anthropic", payload);
           continue;
         }
@@ -1317,10 +1338,12 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
         // it and the `data.type` read below crashed the stream. Drop a non-record frame the same
         // way an unparseable one is dropped, so the message_stop check still governs the outcome.
         if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          replayCapture?.invalidate();
           debugDroppedFrame("anthropic", payload);
           continue;
         }
         const data = parsed as Record<string, unknown>;
+        replayCapture?.accept({ ...data, type: record.event || data.type });
 
         switch (record.event || data.type) {
               case "message_start": {
@@ -1333,6 +1356,9 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
               case "content_block_start": {
                 const block = data.content_block as { type: string; id?: string; name?: unknown; data?: string; thinking?: string; tool_use_id?: unknown; content?: unknown } | undefined;
                 if (!block) break;
+                // Even an unmodeled server tool or empty block is semantic progress.
+                // Fence replays before a later refusal; unknown blocks must not look like pings.
+                yield { type: "heartbeat", replayUnsafe: true };
                 currentBlockType = block.type;
                 if (block.type === "thinking") {
                   // Preserve even a display:omitted block boundary. The bridge can then
@@ -1469,8 +1495,13 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
                 break;
               }
               case "error": {
-                const err = data.error as { message?: string } | undefined;
-                yield { type: "error", message: err?.message ?? "Anthropic error" };
+                const err = data.error as { message?: unknown; type?: unknown; code?: unknown; status?: unknown } | undefined;
+                yield { type: "error", message: typeof err?.message === "string" ? err.message : "Anthropic error",
+                  ...(typeof err?.type === "string" ? { errorType: err.type } : {}),
+                  ...(typeof err?.code === "string" ? { code: err.code } : {}),
+                  ...(typeof err?.status === "number" && Number.isInteger(err.status) && err.status >= 400 && err.status <= 599
+                    ? { status: err.status } : {}),
+                };
                 return;
               }
         }
@@ -1489,6 +1520,7 @@ export function createAnthropicAdapter(provider: OcxProviderConfig, cacheRetenti
         // one-terminal-event contract for consumers that keep draining the generator.
         return;
       } finally {
+        replayCapture?.discard();
         if (currentToolCallId) budget.closeCall(currentToolCallId);
       }
       if (!emittedDone) {

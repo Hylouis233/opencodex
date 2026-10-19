@@ -156,7 +156,7 @@ The shared Responses path follows the [bounded multipart recovery contract](../s
 
 ## Upstream key attempt accounting
 
-Key identity is sealed at guarded physical dispatch after queued selections are rebuilt. Distributed selections retain their request-local entry and revision. A rebuild after selection drift releases the old per-key lease and reacquires admission for the refreshed key; the send guard checks again after waiting. Turn-scoped adapters follow the same rule before invocation. Native Chat, Messages and keyed compact all rebuild stale queued selections before dispatch, including a manual active-key switch under per-key limits; they release the old lease, readmit the new key and honor cancellation while its capacity is occupied. Direct compact and Images record genuine distributed 401/429 cooldowns without replaying paid POSTs; synthetic replay refusals never cool a key. Native Messages revisits mixed distributed 401/429 outcomes with its existing counters. Native Chat and Messages require the physical outgoing credential to match the selected distributed key before pooling a rejection; Messages honors the configured `x-api-key` or Bearer transport while rejecting a conflicting credential header; configured credential overrides cannot cool unused entries. Replacement admission pauses the response-header deadline and retains client cancellation; the header deadline restarts once admission completes. Native Responses captures distributed-key ownership after connection-policy rewrites in `src/providers/api-key-response-ownership.ts`; terminal 401/429 responses settle cooldown only after same-key retry policy, and a failed replay admission or synthetic replay refusal retains the last genuine refusal. Failure ownership accepts an already cooling, still-configured credential so concurrent late 401s extend earlier short cooldowns; physical-send eligibility still refuses cooling credentials. Reused responses, credential/destination overrides, stale revisions and synthetic refusals cannot confer ownership. Local pacing errors retain 429 and Retry-After at the passthrough catch boundary. Unpaced dispatch without a readmission owner fails closed. Replay notification errors release acquired slots before propagating, including pre-acquired-slot dispatch. Translated Anthropic billing recovery uses the [immutable physical-send ownership contract](../providers/anthropic-key-billing.md). Its initial send, credential hop and later mixed-class refusals share the request budget. A denied hop retains the upstream refusal, and a leased pacing body rewrap carries the existing marker rather than attributing the response to rebuilt headers.
+Key identity is sealed at guarded physical dispatch after queued selections are rebuilt. Distributed selections retain their request-local entry and revision. Permanent refusal auto-pause can disable that exact entry independently of the active key; recovery selects a healthy sibling under the same pacing and physical-send bounds. A rebuild after selection drift releases the old per-key lease and reacquires admission for the refreshed key; the send guard checks again after waiting. Turn-scoped adapters follow the same rule before invocation. Native Chat, Messages and keyed compact all rebuild stale queued selections before dispatch, including a manual active-key switch under per-key limits; they release the old lease, readmit the new key and honor cancellation while its capacity is occupied. Direct compact and Images record genuine distributed 401/429 cooldowns without replaying paid POSTs; synthetic replay refusals never cool a key. Native Messages revisits mixed distributed 401/429 outcomes with its existing counters. Native Chat and Messages require the physical outgoing credential to match the selected distributed key before pooling a rejection; Messages honors the configured `x-api-key` or Bearer transport while rejecting a conflicting credential header; configured credential overrides cannot cool unused entries. Replacement admission pauses the response-header deadline and retains client cancellation; the header deadline restarts once admission completes. Native Responses captures distributed-key ownership after connection-policy rewrites in `src/providers/api-key-response-ownership.ts`; terminal 401/429 responses settle cooldown only after same-key retry policy, and a failed replay admission or synthetic replay refusal retains the last genuine refusal. Failure ownership accepts an already cooling, still-configured credential so concurrent late 401s extend earlier short cooldowns; physical-send eligibility still refuses cooling credentials. Reused responses, credential/destination overrides, stale revisions and synthetic refusals cannot confer ownership. Local pacing errors retain 429 and Retry-After at the passthrough catch boundary. Unpaced dispatch without a readmission owner fails closed. Replay notification errors release acquired slots before propagating, including pre-acquired-slot dispatch. Translated Anthropic billing recovery uses the [immutable physical-send ownership contract](../providers/anthropic-key-billing.md). Its initial send, credential hop and later mixed-class refusals share the request budget. A denied hop retains the upstream refusal, and a leased pacing body rewrap carries the existing marker rather than attributing the response to rebuilt headers.
 Before a turn-scoped retry readmits a refreshed selection, it rejects a binding already recorded as failed for this request and returns the last key failure. Eligible replacement keys still release the old lease and reacquire their own pacing capacity before invocation, rechecking after every admission. CLI-backed turns carry a synchronous selection fence through asynchronous tool setup to the physical spawn boundary. Raw adapter terminal usage is recorded before continuation, search, or image loops merge it;
 repeated parsing of one physical response does not count it twice. Key changes preserve the
 previous attempt while retaining the active attempt object shared by streaming/combo callbacks.
@@ -168,44 +168,12 @@ Identity and consumer aggregation follow the [account attribution contract](../d
 When a serving-route change leaves a tool-bearing history whose reasoning has neither plaintext nor
 usable opaque content, a target that requires plaintext reasoning replay is ineligible. Failover
 continues to the next target; exhausting the eligible targets returns `400 target_incompatible`.
-Opaque reasoning minted by another provider or account is never forwarded, and plaintext is never
-fabricated.
+Foreign opaque reasoning is never forwarded or rewritten into plaintext; a turn with no reasoning item
+gets only the fixed placeholder in [tool-loop continuation](native-reasoning-retention.md#combo-tool-loop-continuation).
 
 ## Combo streaming commit boundary
 
-An HTTP 200 does not by itself commit a streaming combo child. The combo parent runs the child's
-downstream Responses SSE through `src/server/responses/combo-stream-preflight.ts`, which owns one
-reader and buffers only until one of these boundaries:
-
-Native post-header reset recovery shares that boundary, because it is asking the same question
-about the same bytes. With `replayReadErrors`, the preflight reports the stage it observed —
-`headers-only` before any parsed event, `protocol-prelude` after `response.created`,
-`semantic-output` once anything else arrives, including a payload it could not parse — and the
-resend gate decides. A `response.created` whose snapshot already carries output items is not a
-prelude.
-
-- a non-control Responses event begins client-visible output or a tool/action item, after which the
-  target is committed and cross-target replay is forbidden;
-- a `response.failed` terminal arrives first, in which case the terminal is converted back through
-  the ordinary bounded combo-failure classifier and may advance to the next declared target;
-- a top-level `error` arrives before output, in which case unknown, rate-limit, and server failures
-  may advance while errors explicitly classified as non-retryable 4xx remain committed;
-- a completed/incomplete terminal or the aggregate preflight byte or retained-chunk cap is reached,
-  in which case the current target is committed conservatively.
-
-The buffered bytes are replayed unchanged before the reader continues. Native passthrough and eager
-relay identity markers are restored on the wrapped response so Windows/Bun stream paths and deferred
-logging retain their existing owners. A failed child keeps its physical attempt receipt and usage,
-while the successful child remains the logical request result.
-
-A `runTurn` adapter has the equivalent boundary in `preflightAdapterEvents` (`src/adapters/run-turn-queue.ts`), streaming and non-streaming alike: when its first meaningful event is a tool call the current request did not declare, and no earlier replay-unsafe heartbeat recorded a side effect, `src/server/responses/run-turn-execution.ts` projects the fail-closed undeclared-tool refusal as a pre-commit 502 so the combo can hop with the unchanged catalog. After any output or a replay-unsafe heartbeat the refusal stays with that child. Chat Completions and Anthropic Messages inbound requests do not use this classification. The same heartbeat also decides an ordinary pre-output adapter error or an empty end: after a replay-unsafe heartbeat the child's 502 is marked non-replayable, so the combo stops on it instead of sending the turn to the next target.
-
-HTTP 410 remains terminal by default. It advances and cools only the exact combo target when the
-structured code or message explicitly identifies a model lifecycle event (end-of-life, retired,
-deprecated, sunset, decommissioned, or no longer available). An unrelated application-level 410 is
-not retried.
-
-> Decision record: [ADR-0071](../decisions/ADR-0071-combo-streaming-commit-boundary.md)
+See [Combo streaming boundaries](responses-combo-boundaries.md#combo-streaming-commit-boundary) for preflight, turn-lease and hop-warning ownership.
 
 Usage consumers preserve positive incomplete-history metadata and connected CLI usage follows the client-scoped hub contract, both specified in [usage accounting](../dashboard-and-usage.md#usage-accounting): readable totals are not a complete ledger, and local management and account data stay separate. Codex pool settings and their consumers follow the [reset-first ordering contract](../providers/openai-accounts.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity. The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`. Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](../remote-workspace.md) owns that integration and records its isolated owner and support limits.
 

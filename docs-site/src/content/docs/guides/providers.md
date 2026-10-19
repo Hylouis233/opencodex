@@ -87,6 +87,26 @@ modalities are declared; Kimi omits `capabilities` for unknown or text-only mode
 a supported capability field keep their existing configuration shape. After updating opencodex,
 regenerate or refresh the client configuration managed by opencodex to receive the updated metadata.
 
+## Replayed Anthropic thinking signatures
+
+On the Responses endpoint, an Anthropic-compatible upstream can reject a replayed thinking
+signature because it belongs to a different conversation prefix. When the error explicitly
+identifies this signature-binding problem, opencodex can remove replayed signed/redacted thinking
+and retry once within the request's send budget. This covers HTTP 400 refusals and initial stream
+errors before output or tool activity. Hosted web search and image/video bridges share one recovery
+limit across their model iterations: only the rejected inference is resent, while completed sidecar
+calls and tool results are retained. An empty-completion retry shares its request's allowance;
+ordinary continuations after output cannot use it. A failed replacement is
+returned without another signature retry. Other errors keep their existing handling.
+
+Sidecar recovery is disabled when enforced spend accounting cannot establish receipts for earlier
+ordinary sidecar sends. It never increases a caller or Combo send allowance.
+
+Only a successful, nonempty completion remembers the rejection for that conversation and serving
+identity for five minutes. Only the refused opaque payloads are suppressed when they can be
+identified; newly issued thinking remains replayable. Plaintext history remains available; a failed or cancelled retry does
+not disable thinking replay on later requests.
+
 ## Auth modes
 
 Provider configs accept three `authMode` values (`key` is the default). The built-in registry also
@@ -169,6 +189,13 @@ tier. On `google-antigravity`, Argon is listed with the same three levels, which
 eligible Enterprise accounts. Cloud Code Assist serves Argon only to the Antigravity CLI client, so
 OpenCodex sends Argon requests and model discovery with the CLI User-Agent
 (`antigravity/cli/1.3.4`) and keeps the IDE User-Agent for every other model.
+
+On Vertex AI, `gemini-4-argon` receives images returned by tools, such as screenshots, inside
+the matching function response. This avoids the upstream 400 error "Requests ending with a
+model turn are not supported" after an image-producing tool call while preserving the images.
+Images from duplicate results or results without a matching call are preserved in a separate
+message after the tool responses, with a marker explaining that they could not be paired.
+No configuration change is needed; this handling is specific to Vertex Argon.
 
 For Gemini on Antigravity, including Argon, provider-marked thought summaries stay separate
 from the answer: Responses uses reasoning summary items, Chat Completions uses
@@ -609,7 +636,7 @@ The account list marks Kiro accounts excluded from automatic selection with a re
 
 ## 3. API-key catalog
 
-opencodex ships 106 built-in presets: 86 key-based, 16 OAuth, three local, and one default
+opencodex ships 105 built-in presets: 85 key-based, 16 OAuth, three local, and one default
 ChatGPT-forward preset. The dashboard's **Add provider** picker opens a key provider's dashboard,
 validates the key, and stores it; validation is provider-specific. Notable entries:
 
@@ -839,33 +866,13 @@ input to the call and hides the block. Hyphenated IDs such as `mimo-v2-pro` and
 examples, ordinary functions, and ambiguous responses remain unchanged. This also handles
 MiMo's malformed `<parameter=` opener at the start of that standalone block.
 
-**OpenCode Zen** (`opencode-zen`) and the keyless **OpenCode Free** preset share
-`https://opencode.ai/zen/v1`. Free models on that gateway often hit a short-window burst
-limit around 15–20 requests/minute (community-measured; OpenCode does not publish RPM).
-Zen may return generic rate-limit 429 responses without `Retry-After` / `X-RateLimit-*`
-headers. That is separate from the keyless desktop quota OpenCode advertises
-(~200 Big Pickle/free-model requests per 5 hours on `opencode-free`). When Zen omits
-`Retry-After` on such a 429, opencodex adds provider guidance to the client error and a
-synthetic `Retry-After`; an upstream `Retry-After` still takes precedence. Same-key
-wait-and-retry remains opt-in via [`retryOn429`](/reference/configuration/).
+**OpenCode Zen** (`opencode-zen`) uses `https://opencode.ai/zen/v1` with an API key from [opencode.ai/auth](https://opencode.ai/auth). Free-model traffic can hit short-window rate limits around 15–20 requests/minute (community-measured; OpenCode does not publish RPM). When a rate-limit 429 omits `Retry-After`, opencodex adds guidance and a synthetic `Retry-After`; valid upstream headers take precedence. Same-key retries remain opt-in via [`retryOn429`](/reference/configuration/).
 
-Gemini models on `opencode-zen` use Google's native API automatically when the provider uses an API key, the default `googleMode` (`ai-studio`), and either `https://opencode.ai/zen/v1` or `https://opencode.ai/inference/v1`. Use the model IDs listed by Zen; OpenCodex preserves them, including Flash IDs without a `-tiered` suffix. Older Gemini Chat/Responses overrides and Responses-only hosted-tool preferences are ignored when reading saved configurations.
+Gemini models on `opencode-zen` use Google's native API automatically when the provider uses an API key, the default `googleMode` (`ai-studio`), and either `https://opencode.ai/zen/v1` or `https://opencode.ai/inference/v1`. Use the model IDs listed by Zen; OpenCodex preserves them, including Flash IDs without a `-tiered` suffix. Claude models on these API-key routes use Anthropic Messages automatically, regardless of `googleMode`. When loading saved configurations, OpenCodex ignores eligible older Gemini and Claude Chat/Responses overrides only for native models in the canonical keyed `opencode-zen` provider on these official Zen routes. It also ignores eligible Responses-only `image_generation` hosted-tool preferences; custom providers, non-key routes, and other preferences remain unchanged.
 
-**The keyless `opencode-free` tier is currently closed to third-party clients.** Zen refuses
-any request that arrives without an `x-opencode-session` header, answering with error type
-`MissingSessionID` and the message "OpenCode's free tier can only be used in OpenCode". Presence
-of the header is the entire gate, so a proxy could pass it by inventing a value — opencodex does
-not. Minting a session identifier and a versioned `opencode/<version>` User-Agent is a claim to
-*be* the OpenCode client, and OpenCode publishes no third-party integration contract for this
-keyless tier; an HTTP 200 obtained that way is a bypassed admission check rather than
-permission. opencodex therefore reports the restriction instead of working around it: a request
-to `opencode-free` returns an error explaining the upstream gate and pointing here.
+**`opencode-free` has been removed** because every model now returns `403 permission_denied` under OpenCode's upstream free-tier gate ([#7255](https://github.com/lidge-jun/opencodex/issues/7255)). Loading an existing configuration disables its entries and dependent model references in memory, warns once per process, and leaves the file unchanged. If it was the default provider, the standard OpenAI OAuth route becomes the default. Use `opencode-go`, keyed `opencode-zen`, or another provider. [OpenCode Zen terms](https://opencode.ai/docs/zen/).
 
-The supported route to the same models is the keyed **`opencode-zen`** provider with an OpenCode
-Zen API key from [opencode.ai/auth](https://opencode.ai/auth). If OpenCode later publishes a
-supported third-party path for the keyless tier, opencodex can follow it; until then the preset
-stays as documentation of the restriction. Upstream terms:
-[opencode.ai/docs/zen](https://opencode.ai/docs/zen/).
+Healthy Claude Desktop assignments and defaults are preserved. Rules whose source-model allowlist becomes empty are disabled, along with native subagent sync when its injection model is removed. Later config saves keep removed references out of the file while preserving healthy concurrent edits.
 
 Most use the `openai-chat` adapter with a bearer key; Anthropic-compatible presets such as
 **Xiaomi MiMo** (`xiaomi`) use the `anthropic` adapter (`x-api-key`). Xiaomi also has an OpenAI Chat

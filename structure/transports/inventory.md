@@ -54,7 +54,7 @@ surface is listed here so a maintainer can find the owner without grepping:
 The registry's first-party `deepseek-flash` row declares native `text` and `image` input, so image
 requests bypass the vision sidecar by default; explicit `noVisionModels` or text-only declarations
 remain authoritative. First-party `deepseek-chat`, `deepseek-reasoner`, and `deepseek-v4-flash`
-remain sidecar-backed by default. The Zen tiers (`opencode-zen`, `opencode-free`) could not be measured in this update (HTTP 402) and keep their existing classifications. Zen `mimo-v2.5-free` and `longcat-2.0-free` now carry positive `modelInputModalities` image evidence rather than relying on absence from the text-only list.
+remain sidecar-backed by default. The keyed Zen tier (`opencode-zen`) could not be measured in this update (HTTP 402) and keeps its existing classifications. Zen `mimo-v2.5-free` and `longcat-2.0-free` now carry positive `modelInputModalities` image evidence rather than relying on absence from the text-only list.
 OpenCode Go's `deepseek-v4.1-flash` was reclassified as native vision on 2026-09-19 (probed on
 that gateway); its sibling `deepseek-v4-flash` stays sidecar-backed.
 
@@ -304,6 +304,8 @@ Unicode pattern normalization uses [copy-on-write traversal](byte-accounting.md#
 `src/oauth/account-quota-rank.ts` ranks Antigravity custom windows for the requested
 Gemini or Claude family, including GPT-OSS in the Claude family. An unknown model
 retains all-window ranking; absent matching evidence retains the existing unranked behavior.
+Windows carrying `modelId` (exact model rows and the Argon summary pool) are excluded
+from headroom and from reset-time selection, including family-less requests.
 `src/server/responses/request-transport.ts` passes the routed model at initial selection.
 The passthrough, adapter, continuation, sidecar and run-turn execution owners pass
 the same routed model during account rotation, without bypassing their send-budget
