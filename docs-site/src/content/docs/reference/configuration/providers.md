@@ -8,6 +8,29 @@ description: Provider entries, authentication, endpoints, model catalogs, quotas
 A provider tells opencodex where a model lives, which wire adapter it speaks, and how requests are
 authenticated.
 
+## DeepSeek: tokens versus image bytes
+
+DeepSeek documents a separate [48 MiB request-body limit](https://api-docs.deepseek.com/guides/files_api/).
+A screenshot-heavy session can reach that limit before its token context fills; increasing
+`model_auto_compact_token_limit` cannot prevent it.
+
+Uploads are **off by default**. Set `modelCapabilities: { "deepseek-flash": { deepseekImageFiles: true } }`
+on your provider if you accept separately persisted images on DeepSeek's servers for one hour.
+PATCH `null` on the axis or model entry clears the opt-in.
+
+For opted-in models on first-party Responses URLs, bodies above 40 MiB replace older inline images
+with [Files API references](https://api-docs.deepseek.com/guides/files_api/), aiming for 32 MiB.
+Image bytes, history and token usage stay unchanged. Files request one-hour expiry; successful
+partial uploads remain until expiry even if generation fails. The bounded reference cache is
+credential-isolated and lasts at most 50 minutes (less if the provider reports earlier expiry).
+A retry can reuse successful uploads; another credential uploads its own copy.
+
+Foreign gateways and Chat Completions are unchanged. Explicit `detail: low` stays inline because
+file references ignore it. Failures stop without discarding images or retrying generation. Repairs
+have a 60-second upload deadline, a 128 MiB input cap and at most two simultaneous preparations;
+provider pacing/concurrency still applies. Oversized text or unconvertible images still need
+compaction; this transport repair does not extend the model's context window.
+
 ## Context windows on custom providers
 
 When a custom provider omits a model's context window, OpenCodex can infer it from the bundled
@@ -105,6 +128,9 @@ separate. Full request URLs such as `/api/v1/responses` are not provider base UR
 | `modelCacheTtlMs?` | `number` | `300000` | Freshness window for the per-provider `/models` cache. |
 | `cacheRetention?` | `"none" \| "short" \| "long"` | first-party Anthropic: `"long"`; other Anthropic-compatible endpoints: `"short"` | Anthropic prompt-cache policy: disabled, 5-minute ephemeral, or 1-hour extended. When unset, requests to `api.anthropic.com` (API key or the OAuth account pools) use the 1-hour TTL, because agentic turns often pause longer than five minutes and a 1-hour write (2x base input instead of 1.25x) pays for itself on the first reuse; Anthropic-compatible gateways and vendor endpoints keep the 5-minute TTL because their 1-hour support is undocumented. On native `/v1/messages` passthrough, caller breakpoints without a `ttl` get `"1h"` unless the request pins any breakpoint to `"5m"`, in which case it is forwarded unchanged. On a translated `/v1/messages` route, caller breakpoints that all ask for `ttl: "1h"` mean `"long"` and any explicit `"5m"` means `"short"`. An explicit value always wins. Changing the TTL makes each open conversation write its cache once more, since 5-minute and 1-hour entries are separate. Cost estimates price writes reported as 1-hour at the 1-hour rate. |
 | `tokenGuardian?` | `OcxTokenGuardianConfig` | off | Optional proactive OAuth refresh and Codex-account warmup policy. |
+
+Opted-in pool accounts with a full included usage window refresh their credit evidence through the existing background sweep from three minutes of age. Ordinary response headers do not refresh credit balances. A failed metadata read never extends the five-minute spending-evidence lifetime.
+
 
 Across these strategies, each account's effective threshold is its `codexAccountAutoSwitchThresholds` entry when present, otherwise global `autoSwitchThreshold`. A zero override disables only proactive usage switching; startup binding, hard-lock, cooldown, entitlement checks, and failure recovery remain enforced.
 
@@ -357,7 +383,7 @@ Providers can expose a built-in shorthand, such as `agy` for `google-antigravity
 | `inlineThinkTagModels?` | `string[]` | Opt-in recovery for `openai-chat` gateways without a server-side reasoning parser. A leading `<think>` / `<thinking>` / `<reasoning>` block (optionally after whitespace) activates splitting in streamed and buffered replies. All answer whitespace is preserved. Subsequent tags are delimiters anywhere, including same-line interleaving and code fences; this mode does not interpret Markdown. Ordinary text or a code fence before the first tag keeps the whole reply untouched. Off by default; prefer structured upstream reasoning or `reasoningSplitModels` where supported. |
 | `reasoningDetailsModels?` | `string[]` | Models whose endpoint returns thinking as a structured `reasoning_details` array (MiniMax M-series with `reasoning_split`); stream deltas are cumulative snapshots that are prefix-diffed, and preserved reasoning replays as a `reasoning_details` array instead of a `reasoning_content` string. |
 | `requiresReasoningPlaceholderModels?` | `string[]` | Models whose upstream rejects a tool_call continuation missing `reasoning_content` (DeepSeek thinking mode); a minimal placeholder is injected when the replay cache misses. Defaults to `preserveReasoningContentModels`; set `[]` to opt out. A provider save that keeps the destination keeps the stored list, including `[]`; see [What a provider save keeps](#what-a-provider-save-keeps). `PATCH /api/providers?name=<provider>` accepts an array or `null` to clear it. |
-| `showThinkingSummary?` | `boolean` | Display provider-authored summaries when a Responses client omits `reasoning.summary`. Explicit wire `"none"` wins; a client that serializes its preference as omission cannot be distinguished. Raw reasoning remains content and is never relabeled as a summary. The `google-antigravity` preset defaults to `true`; explicit `false` disables that default. CCA Gemini requests also opt into `generationConfig.thinkingConfig.includeThoughts` when display is enabled; image, Claude and gpt-oss requests do not. This does not change client configuration or global catalog summary defaults. |
+| `showThinkingSummary?` | `boolean` | Display provider-authored summaries when a Responses client omits `reasoning.summary`. Explicit wire `"none"` wins; a client that serializes its preference as omission cannot be distinguished. Raw reasoning remains content and is never relabeled as a summary. The `google-antigravity` preset defaults to `true`; explicit `false` disables that default. Eligible CCA, Vertex and direct Gemini requests also opt into `generationConfig.thinkingConfig.includeThoughts` when display is enabled; image, Claude, gpt-oss and unladdered Vertex requests do not. This does not change client configuration or global catalog summary defaults. |
 | `hideRawReasoning?` | `boolean` | Keep a routed provider's raw chain of thought off the client-facing content channel (openai-chat `reasoning_content`, kiro tags, `response.reasoning_text.*`) while provider-authored summaries still stream on the summary channel. Explicit wire `reasoning.summary: "none"` keeps hiding both. This controls what a client displays; it does not keep the text from the client. A Responses bridge route still sends it inside the `ocxr1` replay envelope in the reasoning item's `encrypted_content`, which is base64 JSON rather than encryption, so the client can echo it back on the next turn. The direct Chat and Messages encoders have no envelope on their wire, so those clients receive no copy and replay comes from the server-side reasoning replay cache. `preserveReasoningContentModels` replay and DeepSeek-style continuations are unaffected either way. Off by default; a native passthrough route relays the upstream's own frames and ignores this option. A save of the same provider name keeps an omitted value even after a destination move; `PATCH` accepts a boolean or `null` to clear it. |
 | `thinkingToggleModels?` | `string[]` | Chat models using `thinking.enabled` rather than an effort ladder. |
 | `thinkingBudgetModels?` | `string[]` | Chat models using integer `thinking_budget`; effort maps to a budget fraction. |
@@ -1785,7 +1811,7 @@ contracts.
 
 ### Per-model capability declarations
 
-`modelCapabilities` stores explicit declarations keyed by exact upstream model ID. IDs preserve case and must not contain surrounding whitespace. Each entry may contain `inputModalities` (`text`, `image`, `audio`, `video`), `contextTier` (`default`, `long_context`) and `video.processing` (`static`, `agentic`). These are operator declarations, not proof of provider support. Context-tier and video fields currently record intent only and do not activate upstream behavior or increase catalog windows.
+`modelCapabilities` stores explicit declarations keyed by exact upstream model ID. IDs preserve case and must not contain surrounding whitespace. Each entry may contain `inputModalities` (`text`, `image`, `audio`, `video`), `contextTier` (`default`, `long_context`), `video.processing` (`static`, `agentic`) and `deepseekImageFiles` (`boolean`; see [DeepSeek image bytes](#deepseek-tokens-versus-image-bytes)). These are operator declarations, not proof of provider support. Context-tier and video fields currently record intent only and do not activate upstream behavior or increase catalog windows.
 
 The raw provider editor and provider API expose this map. POST/PUT replace an explicitly supplied map and reject null entries. PATCH merges individual axes; null clears a map, model, axis or video processing value, while `{}` makes no change. Omitted provider overwrites preserve the existing map. Malformed hand-edited files retain valid independent axes and treat malformed explicit input modalities as text-only, with a diagnostic.
 

@@ -1720,8 +1720,10 @@ export function noteProviderAttemptSend(
   if (attempt && attempt.sendCount > 0 && attemptAccountChanged(previous, next, attempt.provider, logCtx.provider)) {
     // An input estimate is not evidence that a failed send used that many tokens.
     delete attempt.inputTokenEstimate;
+    // An account-scoped recovery kind names the status the sealed account answered.
     finishRequestAttempt(attempt, attempt.status >= 100 ? attempt.status
-      : recovery === "key-401" ? 401 : recovery?.includes("429") ? 429 : 502,
+      : recovery === "key-401" || recovery === "oauth-401" ? 401 : recovery === "oauth-account-403" ? 403
+        : recovery === "oauth-account-402" ? 402 : recovery?.includes("429") ? 429 : 502,
     Date.now() - (logCtx.activeAttemptStartedAt ?? Date.now()), attempt.usage);
     // This attempt is being sealed because a NAMED recovery rejected it, so the recovery kind
     // is direct evidence here rather than an inference from history. Without this the sealed
@@ -1850,16 +1852,20 @@ export function finishRequestAttempt(
 export function aggregateAttemptUsage(
   attempts: readonly PersistedUsageAttempt[],
 ): FinalizedUsageResult {
-  const status: UsageStatus = attempts.length > 0
-    && attempts.every(attempt => attempt.usageStatus === "unsupported")
+  // A usage-less attempt that never reached upstream spent nothing (summary.ts `spentNothing`),
+  // so it cannot leave the row's usage unknown.
+  const measured = attempts.filter(attempt => attempt.usage
+    || (attempt.sendCount !== 0 && attempt.locallyAnswered !== true));
+  const status: UsageStatus = measured.length > 0
+    && measured.every(attempt => attempt.usageStatus === "unsupported")
     ? "unsupported"
-    : attempts.some(attempt => (
+    : measured.some(attempt => (
         attempt.usageStatus === "unreported" || attempt.usageStatus === "unsupported"
       ))
       ? "unreported"
-      : attempts.some(attempt => attempt.usageStatus === "estimated")
+      : measured.some(attempt => attempt.usageStatus === "estimated")
         ? "estimated"
-        : attempts.length > 0
+        : measured.length > 0
           ? "reported"
           : "unreported";
 
@@ -1876,7 +1882,10 @@ export function aggregateAttemptUsage(
     return present.length > 0 ? present.reduce((sum, value) => sum + value, 0) : undefined;
   };
   const cachedInputTokens = sumOptional("cachedInputTokens");
-  const cacheReadInputTokens = sumOptional("cacheReadInputTokens");
+  // Readers take `cacheReadInputTokens ?? cachedInputTokens` (usage/cost.ts), so once any attempt
+  // reports the read field, an attempt that only reports `cachedInputTokens` must count in it too.
+  const cacheReadInputTokens = sumOptional("cacheReadInputTokens") === undefined ? undefined
+    : usages.reduce((sum, usage) => sum + (usage.cacheReadInputTokens ?? usage.cachedInputTokens ?? 0), 0);
   const cacheCreationInputTokens = sumOptional("cacheCreationInputTokens");
   const cacheCreation1hInputTokens = sumOptional("cacheCreation1hInputTokens");
   const reasoningOutputTokens = sumOptional("reasoningOutputTokens");

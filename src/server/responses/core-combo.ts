@@ -1165,6 +1165,9 @@ export async function executeComboResponses(
       : comboFailureDecision(failure.response.status, failure.classificationText, {
         code: failure.upstreamCode,
         codexModelRefusal: failure.codexModelRefusal,
+        // The adapter the failed leg actually resolved: a configured `kiro` provider can route a
+        // model through another wire via `modelAdapters`, and an unresolved leg grants no hop.
+        failedAdapter: childLog.providerAdapter,
       });
     const wantsStream = (rawBody as { stream?: unknown } | null)?.stream === true;
     // Local byte admission has its own diagnostic; do not relabel it as an upstream refusal.

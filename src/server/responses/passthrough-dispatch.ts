@@ -1,4 +1,4 @@
-import { recoverAutoPausedAccount } from "./account-auto-pause-recovery";
+import { recoverAutoPausedAccount, rotatePassthroughKeyOn429 } from "./passthrough-key-rotation";
 import { adoptCodexWsStage, capturePassthroughAffinity } from "./passthrough-observations";
 import { spendLedgerStorageErrorResponse } from "./spend-storage-error";
 import { requestPacingOverloadResponse } from "./pacing-overload";
@@ -132,7 +132,7 @@ import {
 import { mapCodexAuthContextErrorToResponse } from "./codex-auth-error";
 import { classifyTransportFailureKind, transportErrorCode } from "../../lib/upstream-reachability";
 import { captureAccountAutoPauseAttempt, wasAccountAutoPaused, wasPermanentAccountRefusal } from "../../oauth/account-auto-pause";
-import { recordCodexUpstreamOutcome } from "../../codex/routing";
+import { codexFailureWindowOutcomeMeta, recordCodexUpstreamOutcome } from "../../codex/routing";
 import { describeUpstreamConnectFailure } from "./upstream-error";
 import type { OpaqueBlobRecoveryGuard } from "./core-opaque-recovery";
 import {
@@ -990,6 +990,7 @@ export async function preparePassthroughExchange(
       }
       if (usesCodexForwardPoolAuth(admissionState.authCtx, route.provider)) {
         recordCodexUpstreamOutcome(config, admissionState.authCtx.accountId, outcome, {
+          ...codexFailureWindowOutcomeMeta(admissionState.authCtx),
           threadId: admissionState.authCtx.affinityKey,
           fixedAccount: admissionState.authCtx.fixedAccount,
           modelId: route.modelId,
@@ -1606,6 +1607,7 @@ export async function preparePassthroughExchange(
         return transportFailureResponse(err);
       }
     }
+    const keyRotation = await rotatePassthroughKeyOn429({ config, route, parsed, response: upstreamResponse, adapterName: transportState.adapter.name, budgetSpent: () => sendBudgetExhausted(transientSendAttempts()), refetch: () => rebuildAndRefetch("key-429") }); if (keyRotation) { if ("failed" in keyRotation) return keyRotation.failed; upstreamResponse = keyRotation; continue passthroughRecovery; }
     const captureAffinityResponse = (
       response: Response,
       captureAuthCtx: CodexAuthContext = admissionState.authCtx,

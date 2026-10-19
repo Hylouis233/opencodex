@@ -324,6 +324,8 @@ export type CodexAuthContext =
       writerGeneration: number;
       /** Captured before async credential work; never reconstructed after the upstream response. */
       mainQuotaWriter?: MainQuotaWriter;
+      /** Immutable credential proof captured while materializing this physical attempt's headers. */
+      mainQuotaDispatch?: MainQuotaDispatch;
       reserveAuthorization?: MainReserveAuthorization;
       accessToken: string;
       chatgptAccountId: string;
@@ -1080,6 +1082,33 @@ async function awaitMainAccountPolicyBindingSettled(
   if (!settled) throw new CodexMainProfileDrainingError();
 }
 
+/** Memory-only ownership check shared by Direct admission and pre-auth hard-lock routing. */
+export async function mainAccountHardLockAppliesToCaller(
+  headers: Headers,
+  policy: CodexAuthPolicyConfig,
+  options: Pick<ResolveCodexAuthContextOptions,
+    "substituteMainCredentialForDirect" | "signal" | "mainAccountPolicyBindingWaitMs"> = {},
+): Promise<boolean> {
+  if (options.substituteMainCredentialForDirect === true) return true;
+  if (!hasCallerCodexBearer(headers)) return false;
+  if (isMainAccountHardLockEnabled(policy)) await awaitMainAccountPolicyBindingSettled(options);
+  return callerMatchesObservedMain(headers);
+}
+
+/**
+ * Resolve ownership once, then hand back a synchronous proof. Main identity or its observed bearer
+ * can change across the await; the hard-lock reroute rechecks the proof with no await between it
+ * and the body rewrite, so a replacement main's lock never reroutes the original caller.
+ */
+export async function mainAccountHardLockCallerProof(
+  headers: Headers,
+  policy: CodexAuthPolicyConfig,
+  options: Parameters<typeof mainAccountHardLockAppliesToCaller>[2] = {},
+): Promise<(() => boolean) | null> {
+  if (!await mainAccountHardLockAppliesToCaller(headers, policy, options)) return null;
+  return options.substituteMainCredentialForDirect === true ? () => true : () => callerMatchesObservedMain(headers);
+}
+
 /**
  * Resolve the credential for one Codex turn. A main hard-lock reached through unpinned pool
  * selection is annotated with the earliest known pool recovery, so the refusal can name a retry
@@ -1172,8 +1201,7 @@ async function resolveCodexAuthContextUnannotated(
     // Trusted substitution still has to claim and validate stored main below.
     if (!substituteStoredMain && !hasCallerCodexBearer(headers)) throw new CodexDirectAuthenticationError();
     if (!substituteStoredMain) {
-      if (isMainAccountHardLockEnabled(policy)) await awaitMainAccountPolicyBindingSettled(options);
-      if (callerMatchesObservedMain(headers)) assertMainAccountPolicy(policy);
+      if (await mainAccountHardLockAppliesToCaller(headers, policy, options)) assertMainAccountPolicy(policy);
       assertCallerOwnedMainPoolNotCooled();
       if (reserve) {
         const selected = materializeCodexUpstreamAuth(headers, { kind: "main", accountId: null }, { config: policy });
@@ -1432,6 +1460,7 @@ async function resolveCodexAuthContextUnannotated(
       if (
         requestScopedMainCredential
         && fixedAccountId === undefined
+        && !(callerMatchesObservedMain(headers) && policy.pausedCodexAccountIds?.includes(MAIN_CODEX_ACCOUNT_ID))
         && options.excludeAccountId !== MAIN_CODEX_ACCOUNT_ID
       ) {
         return await resolveCallerOwnedMainContext();
@@ -1590,6 +1619,7 @@ async function resolveCodexAuthContextUnannotated(
       // alternate is eligible. A validated caller may still serve this request,
       // just as it can after an upstream rejection, without changing Pool state.
       if (requestScopedMainCredential && fixedAccountId === undefined
+        && !(callerMatchesObservedMain(headers) && policy.pausedCodexAccountIds?.includes(MAIN_CODEX_ACCOUNT_ID))
         && options.excludeAccountId !== MAIN_CODEX_ACCOUNT_ID
         && !callerIsCooledPoolAccount(headers, config, accountId)) {
         return await resolveCallerOwnedMainContext();
@@ -1766,6 +1796,8 @@ export function materializeCodexUpstreamAuth(
     if (ctx.kind === "main-pool") {
       ctx.mainQuotaWriter = observeSelectedMainCredential(ctx, ctx.mainQuotaWriter);
       assertMainAccountPolicy(options.config);
+      ctx.mainQuotaDispatch = ctx.mainQuotaWriter && isMainQuotaWriterLive(ctx.mainQuotaWriter)
+        ? selectedMainQuotaDispatch(selected) : undefined;
     }
     assertMaterializedReserve(selected, ctx, options);
     return selected;
