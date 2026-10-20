@@ -15,8 +15,9 @@ Identified wrappers never authorize synthetic calls or disappear because a bare 
 recovered. Empty bodies, nested tool/function headers, and named or nested parameter markup
 stay inert. One malformed leading `<parameter=` retains existing freeform-body normalization.
 Ordinary functions, absent tools, hyphenated MiMo IDs, literals and prose without a block remain
-unchanged. A structured call disables standalone recovery for the entire response; errors and
-cancellation dispatch nothing. Each accepted bare block becomes one start/delta/end sequence
+unchanged. A structured call disables standalone recovery for the entire response; errors,
+cancellation, a stream that ends without `finish_reason` or `[DONE]`, and content after the first
+terminal signal dispatch nothing (the block stays visible text). Each accepted bare block becomes one start/delta/end sequence
 with restored tool identity and JSON `{input}` arguments. Only accepted bare ranges are removed;
 the structured-call repeated-pair ambiguity rule does not govern synthetic calls.
 

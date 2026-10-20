@@ -121,8 +121,27 @@ labels local presets separately; those normally omit both `authMode` and `apiKey
 The [`retryOn429`](/reference/configuration/) same-key 429 replay applies only to API-key
 providers (`authMode: "key"`). OAuth, forward, and local presets are excluded — their
 credentials must never be replayed on the same token, and local runtimes have no remote key to
-preserve. It is opt-in: when the option is absent the feature is off; object presence enables
-it unless `enabled: false`.
+preserve. It is opt-in except for documented destination-specific defaults. Canonical Mistral
+Chat uses a patient retry policy (6 replays, 10-second fallback interval), within the
+existing request-wide send allowance. Explicit `retryOn429` settings, including
+`enabled: false`, take precedence. The Mistral preset also forwards supplied prompt-cache
+keys by default; `promptCacheKey: false` disables forwarding. Cache affinity improves the
+chance of reuse, but does not guarantee a cache hit or remove token-throughput limits.
+
+Mistral uses one API-key provider for both Studio and Vibe keys. Key types and plan allowances
+are described in [Mistral's API-key documentation](https://docs.mistral.ai/admin/identity-access/api-keys);
+the proxy does not infer a subscription tier from the key. For every model, explicit upstream
+`Retry-After` deadlines are shared between calls on the same credential and model. A 429
+without a retry time can activate a conservative 60-second recovery wait when valid minute
+counters show exhausted capacity, or the refused query's measured cost exceeds the remaining
+tokens while fitting the full advertised allowance. This is a local recovery policy, not an
+exact server-reset prediction. Healthy traffic never predicts the next query's cache or cost.
+After the wait, one recovery probe runs; success restores ordinary traffic. Missing, malformed,
+zero-entitlement, exhausted-monthly, or above-full-allowance evidence does not invent a reset or compact history.
+`requestPacing: { "enabled": false }` or `retryOn429: { "respectRetryAfter": false }`
+disables shared pacing. If Mistral's
+retry time exceeds `retryOn429.maxIntervalMs`, the proxy returns the 429 and retry hint rather
+than replaying early. Context windows and per-model compaction preferences remain independent.
 
 When round-robin key selection is enabled, queued requests recheck key cooldowns before sending and acquire pacing capacity for any replacement key. This applies to native Chat, Messages, Responses and compact. Waiting for replacement-key capacity does not consume the upstream response-header timeout. Per-key pacing and round-robin use guarded HTTP/SSE even when upstream WebSockets are enabled; WebSocket-only steering and injection require a route without those key policies. This does not change the saved active key. An established upstream turn keeps its credential; later sends are refused if that key cools. Pre-output key rejection can recover to a healthy key within the existing request limit. Direct Images and compact requests record genuine 401/429 cooldowns without replaying that paid POST.
 
@@ -745,6 +764,16 @@ Create a key in the [OpenGateway dashboard](https://opengateway.ai/api-keys), th
 use the configured Bearer key; the public model list does not validate that key.
 On the Responses wire OpenGateway rejects replayed native custom tool calls, so the preset
 lowers Codex custom tools such as code-mode `exec` to function tools before sending them.
+Tool-result content arrays are sent as text, with images preserved after the paired tool-result group. Unsupported result parts, including refusals and opaque content, are rejected explicitly with a client input error before sending.
+Image detail `original` maps to `high`, which the gateway accepts; image bytes remain unchanged.
+The native Responses route also checks text-only empty completions before exposing them as success.
+Exhausted output budgets produce `incomplete` with `max_output_tokens`; the proxy does not increase
+the requested budget. A replay-safe empty completion with budget remaining may retry once, within
+the existing send limit. Explicit `emptyCompletionRetry: false` or `OCX_EMPTY_COMPLETION_RETRY=0`
+disables that retry. Text, refusals, tool activity, and unknown stream events prevent replay and
+retain the original stream. The protection does not change other providers or their retry defaults.
+Replay requires explicit `store: false`, complete input, and client-executed tools only; a hosted
+tool such as `web_search` prevents automatic replay even if no tool event was observed.
 
 **TokenLab** ([sponsor](https://github.com/lidge-jun/opencodex/blob/main/SPONSORS.md)) is an
 OpenAI-compatible API gateway at [tokenlab.sh](https://tokenlab.sh/r/OPENCODEX),
