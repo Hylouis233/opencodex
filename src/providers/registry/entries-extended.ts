@@ -1307,14 +1307,15 @@ export const PROVIDER_REGISTRY_EXTENDED: readonly ProviderRegistryEntry[] = [
     baseUrl: "https://api.xiaomimimo.com/api/free-ai/openai/chat",
     authKind: "key",
     keyOptional: true,
-    featured: true,
+    featured: false,
+    deprecated: "Deprecated: requests through this entry fail. Bootstrap may still return a JWT, but /api/free-ai/openai/chat rejects the configured model \"mimo-auto\" with 400 \"Unsupported model\". Kept only so existing saved providers keep resolving; new setups should use the keyed xiaomi provider.",
     liveModels: true,
     dashboardUrl: "https://xiaomimimo.com",
     defaultModel: "mimo-auto",
     models: ["mimo-auto"],
     reasoningEfforts: ["low", "medium", "high"],
     reasoningEffortMap: { xhigh: "high", max: "high", ultra: "high" },
-    note: "No key needed — uses Xiaomi MiMo's free public tier (limited-time offer). A JWT is bootstrapped automatically with an anonymous random client id stored locally. The endpoint contract mirrors the official MiMoCode client and is not publicly documented — Xiaomi may change or restrict it at any time. Prompts may be processed/retained by Xiaomi; do not send confidential material.",
+    note: "Deprecated: the anonymous MiMo free lane stopped completing requests for this entry in 2026. Bootstrap may still issue a JWT, but /api/free-ai/openai/chat rejects the configured model \"mimo-auto\" with 400 \"Unsupported model\", so turns cannot finish. This entry remains only so existing saved providers keep resolving; add the keyed Xiaomi provider at https://platform.xiaomimimo.com instead. Xiaomi may resume or change the service at any time.",
   },
   // Xiaomi MiMo paid token plan. Separate host and wire from both `xiaomi` (Anthropic) and
   // `mimo-free` (free tier, bespoke adapter), so it needs its own entry rather than a variant.
