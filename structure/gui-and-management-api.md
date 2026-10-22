@@ -139,7 +139,7 @@ over that request's nonce, PID, and port. A caller that decides something from t
 with `requireResponseProof`, which refuses an unsigned or mismatched response: the capability
 proves the request to the server, and only the proof tells the caller that the answer came from it
 and not from a process that took the port. `ocx status` requires the proof before it prefers the
-live proxy's `/api/startup-health` verdict over its own shell-local probe (#5977).
+live proxy's `/api/startup-health` verdict over its own shell-local probe (#5977). Local `ocx usage compare` also requires proof for each exact query and pins the runtime record across both windows with 60-second direct reads.
 
 The desktop tray uses the same read-v1 contract for its fixed GET allowlist in
 `src/lib/local-management-capability.ts`, including `/api/oauth/accounts` and
