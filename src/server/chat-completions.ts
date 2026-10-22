@@ -81,6 +81,7 @@ import { createNativeChatComboSource, handleNativeChatCompletions, nativeChatDec
 import { upstreamWireForAdapter, type ProtocolReasonCode } from "../protocols/contract";
 import { createProtocolEnvelope } from "../protocols/envelope";
 import { featuresFromChatBody } from "../protocols/features";
+import { credentialDomainFor } from "../protocols/opaque-state";
 import { checkRepresentable, unrepresentableMessage } from "../protocols/guard";
 import { requestPathForLane } from "../protocols/path";
 import { resolveProtocolSettings } from "../protocols/settings";
@@ -344,7 +345,13 @@ async function handleChatCompletionsWithBudget(
       directConversation = chatConversationToIr(chatBody, chatBody.model as string);
       internalBody = chatSettingsBody(chatBody);
     } else {
-      internalBody = chatToResponsesBody(chatBody);
+      internalBody = chatToResponsesBody(chatBody, {
+        // #7429: only a route that is and stays first-party Anthropic may receive signed thinking
+        // a Chat client returns; a combo, policy or rewritten route resolves its target later.
+        acceptAnthropicReasoningSignatures: settledRoute !== null && !routeMayChangeCredentialDomain
+          && settledRoute.provider.adapter === "anthropic"
+          && credentialDomainFor(settledRoute.provider)?.firstPartyAnthropic === true,
+      });
     }
     if (effortRow) {
       internalBody.reasoning = {
@@ -413,6 +420,7 @@ async function handleChatCompletionsWithBudget(
   // Unresolved combos are checked after their concrete child route is selected in Responses.
   if (settledRoute && !settledRoute.combo && isCanonicalOpenAiForwardProvider(settledRoute.provider)
     && isCodexReserveHelperUnsupported(config, settledRoute.modelId, logIds?.admission, visionDescribeTerminal)) {
+    if (logIds) addFinalRequestLog(logIds.requestId, logIds.start, logCtx, 400, { closeReason: "non_stream" });
     return chatCompletionsErrorResponse(400, CODEX_RESERVE_HELPER_UNSUPPORTED_MESSAGE, "invalid_request_error");
   }
   const nativeCallerAuth = captureExplicitOpenAiCallerAuth(req.headers, config);
