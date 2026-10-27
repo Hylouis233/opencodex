@@ -36,13 +36,6 @@ export function bindUpstreamHistorySlimConfig(config: Pick<OcxConfig, "upstreamH
   boundConfig = config;
 }
 
-export function upstreamHistorySlimConfigError(value: unknown): string | null {
-  if (!isPlainObject(value) || !Object.hasOwn(value, "upstreamHistorySlim")) return null;
-  const mode = value.upstreamHistorySlim;
-  return mode === undefined || mode === "off" || mode === "codex" ? null
-    : 'schema_invalid: upstreamHistorySlim: must be "off" or "codex"';
-}
-
 export function resolveUpstreamHistorySlim(value: unknown): UpstreamHistorySlim {
   return value === "codex" ? "codex" : "off";
 }

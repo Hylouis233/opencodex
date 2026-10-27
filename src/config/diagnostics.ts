@@ -1,4 +1,3 @@
-import { upstreamHistorySlimConfigError } from "../server/responses/history-slim";
 import { readExistingSpendSalt, spendPoolAliasesError, validatePoolAliasOwners } from "../lib/spend-pool-alias-validation";
 import { isSubagentModelEntry, rawSubagentModelForce } from "./subagent-models";
 import { validRemainingQuotaAccountIds } from "../codex/account-use-remaining";
@@ -279,6 +278,14 @@ function upstreamRequestCompressionError(value: unknown): string | null {
   const mode = raw.upstreamRequestCompression;
   if (mode === undefined || mode === "off" || mode === "gzip" || mode === "zstd") return null;
   return "schema_invalid: upstreamRequestCompression: must be \"off\", \"gzip\" or \"zstd\"";
+}
+
+function upstreamHistorySlimConfigError(value: unknown): string | null {
+  const raw = rawConfigRecord(value);
+  if (!raw || !Object.hasOwn(raw, "upstreamHistorySlim")) return null;
+  const mode = raw.upstreamHistorySlim;
+  if (mode === undefined || mode === "off" || mode === "codex") return null;
+  return "schema_invalid: upstreamHistorySlim: must be \"off\" or \"codex\"";
 }
 
 function plaintextV2AgentMessagesError(value: unknown): string | null {

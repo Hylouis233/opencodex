@@ -1,4 +1,4 @@
-import { setCodexWsIncrementalUpload } from "../server/responses/codex-ws-incremental";
+import { setCodexWsIncrementalUpload } from "./codex-ws-incremental-setting";
 import { setCodexWsReuseAcrossTurns } from "./codex-ws-reuse-setting";
 import { isSubagentModelEntry, rawSubagentModelForce } from "./subagent-models";
 import { chmodSync, existsSync } from "node:fs";

@@ -2,8 +2,10 @@
 
 ## Incremental WebSocket continuation
 
-`src/server/responses/codex-ws-incremental.ts` owns the default-off
-`codexWsIncrementalUpload` switch and bounded, socket-local completed-prefix state.
+`src/server/responses/codex-ws-incremental.ts` owns bounded, socket-local completed-prefix
+state behind the default-off `codexWsIncrementalUpload` switch. The process flag lives in
+`src/config/codex-ws-incremental-setting.ts`, so config loading never reaches the Responses
+transport from a Child or Hub client; the transport subscribes to clear its state on disable.
 It implies cross-turn reuse. Ordinary canonical ChatGPT creates can send only newly
 appended input and the acknowledged response ID when the envelope and full prefix match.
 Provider-issued item IDs/status and empty reasoning content are normalized only for
@@ -41,7 +43,7 @@ Socket continuation follows the [incremental contract](#incremental-websocket-co
 
 `src/config/schema/config-schema.ts` declares the optional `upstreamHistorySlim` enum, which defaults to `off`; `codex` selects the explicitly
 lossy outbound history policy described in [Responses transport](responses.md#responses-httpsse).
-Invalid disk values disable the option; candidate writes reject them. The live state-store
+Invalid disk values disable the option; `src/config/diagnostics.ts` rejects them on candidate writes. The live state-store
 registration in `src/lib/state-store-registrations.ts` binds the policy without editing retained conversation data.
 `codexWsIncrementalUpload` is a default-off boolean and implies socket reuse after reload;
 the [incremental transport contract](#incremental-websocket-continuation)

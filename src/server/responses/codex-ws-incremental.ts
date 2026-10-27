@@ -1,17 +1,14 @@
 // Send only new input on acknowledged, account-bound native Codex WebSocket continuations.
 // No retry or upstream-response storage policy is changed by this module.
-let enabled = false;
-export function setCodexWsIncrementalUpload(value: boolean): void {
-  enabled = value;
-  if (!value) { states.clear(); retained = 0; }
-}
-export function codexWsIncrementalUploadEnabled(): boolean { return enabled; }
+import { codexWsIncrementalUploadEnabled, onCodexWsIncrementalUploadDisabled } from "../../config/codex-ws-incremental-setting";
+export { codexWsIncrementalUploadEnabled, setCodexWsIncrementalUpload } from "../../config/codex-ws-incremental-setting";
 const MAX_CONTEXT = 64 * 1024 * 1024;
 const MAX_RETAINED = 128 * 1024 * 1024;
 type Obj = Record<string, unknown>;
 type State = { envelope: string; items: string[]; id: string; bytes: number };
 const states = new Map<object, State>();
 let retained = 0;
+onCodexWsIncrementalUploadDisabled(() => { states.clear(); retained = 0; });
 const counters = { fullCreates: 0, deltaCreates: 0, fullFrameBytes: 0, sentFrameBytes: 0,
   cold: 0, prefixMismatch: 0, envelopeChanged: 0, ineligible: 0, overMemoryLimit: 0 };
 const record = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -62,7 +59,7 @@ function envelopeKey(body: Obj): string {
 export type IncrementalPlan = { session: object; frameText: string; fullBytes: number; sentBytes: number;
   delta: boolean; envelope: string; items: string[]; retainable: boolean };
 export function prepareIncrementalFrame(session: object, fullFrame: string): IncrementalPlan | undefined {
-  if (!enabled) return undefined;
+  if (!codexWsIncrementalUploadEnabled()) return undefined;
   let body: unknown;
   try { body = JSON.parse(fullFrame); } catch { return undefined; }
   if (!record(body) || body.type !== 'response.create' || !Array.isArray(body.input)
@@ -93,7 +90,7 @@ export function recordIncrementalDispatch(plan: IncrementalPlan): void {
   counters.fullFrameBytes += plan.fullBytes; counters.sentFrameBytes += plan.sentBytes;
 }
 export function completeIncrementalFrame(plan: IncrementalPlan, response: unknown): void {
-  if (!enabled || !record(response) || response.status !== 'completed'
+  if (!codexWsIncrementalUploadEnabled() || !record(response) || response.status !== 'completed'
     || typeof response.id !== 'string' || !Array.isArray(response.output)) return;
   const items = [...plan.items, ...response.output.map(itemKey)];
   const bytes = items.reduce((n, item) => n + Buffer.byteLength(item), Buffer.byteLength(plan.envelope));
@@ -107,6 +104,6 @@ export function forgetIncrementalSession(session: object): void {
   retained -= state.bytes; states.delete(session);
 }
 export function codexWsIncrementalStats() {
-  return { enabled, ...counters, retainedBytes: retained, retainedSessions: states.size,
+  return { enabled: codexWsIncrementalUploadEnabled(), ...counters, retainedBytes: retained, retainedSessions: states.size,
     savedFrameBytes: counters.fullFrameBytes - counters.sentFrameBytes };
 }
