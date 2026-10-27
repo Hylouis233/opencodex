@@ -10,7 +10,7 @@ import { codexWsUpstreamFetch } from '../../src/server/responses/ws-upstream';
 import { codexWsPool } from '../../src/server/responses/codex-ws-pool';
 import { providerFetch } from '../../src/server/responses/fetch-helpers';
 import { bindUpstreamHistorySlimConfig } from '../../src/server/responses/history-slim';
-beforeEach(() => { enable(true); setCodexWsReuseAcrossTurns(true); });
+beforeEach(() => { enable(false); enable(true); setCodexWsReuseAcrossTurns(true); });
 afterAll(() => { enable(false); setCodexWsReuseAcrossTurns(false); });
 const message = (role: string, text: string) => ({ type: 'message', role,
   content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }] });

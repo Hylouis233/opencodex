@@ -330,8 +330,13 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/responses/advisor-plan-slot.ts` | [`advisor.md`](advisor.md) |
 | `src/server/responses/advisor-slot.ts` | [`advisor.md`](advisor.md) |
 | `src/server/responses/anthropic-thinking-recovery.ts` | [`transports/anthropic-thinking-recovery.md`](transports/anthropic-thinking-recovery.md) |
+| `src/server/responses/codex-ws-exchange.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/server/responses/codex-ws-incremental.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
+| `src/server/responses/codex-ws-pool.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
+| `src/server/responses/codex-ws-request.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
+| `src/server/responses/codex-ws-session.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/server/responses/compact.ts` | [`transports/responses-citations.md`](transports/responses-citations.md) |
+| `src/server/responses/fetch-helpers.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/server/responses/history-slim.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/server/responses/opengateway-completion-guard.ts` | [`providers/opengateway.md`](providers/opengateway.md) |
 | `src/server/responses/passthrough-completion.ts` | [`providers/opengateway.md`](providers/opengateway.md) |
@@ -339,6 +344,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/responses/request-prepare.ts` | [`transports/response-turn-membership.md`](transports/response-turn-membership.md) |
 | `src/server/responses/request-transport.ts` | [`transports/response-turn-membership.md`](transports/response-turn-membership.md)<br>[`account-auto-pause.md`](account-auto-pause.md) |
 | `src/server/responses/turn-membership.ts` | [`transports/response-turn-membership.md`](transports/response-turn-membership.md) |
+| `src/server/responses/ws-upstream.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/service-manager-probe.ts` | [`ops/service-and-sidecars.md`](ops/service-and-sidecars.md) |
 | `src/service.ts` | [`runtime.md`](runtime.md)<br>[`ops/docs-and-release.md`](ops/docs-and-release.md) |
 | `src/service/` | [`runtime.md`](runtime.md) |
