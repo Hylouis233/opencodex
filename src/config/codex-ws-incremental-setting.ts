@@ -23,9 +23,9 @@ export function onCodexWsIncrementalUploadDisabled(listener: () => void): void {
 }
 
 /**
- * Bind the opt-in to the adopted live server config only, so detached `loadConfig()` reads
- * (CLI, management snapshots) never enable incremental sends or clear retained state.
- * Incremental upload implies cross-turn reuse, matching the load-time reuse derivation.
+ * Sole owner of both Codex WS process flags: bound from the adopted live server config only, so
+ * detached `loadConfig()` reads (CLI, `/api/sync`, management snapshots) never toggle socket reuse,
+ * enable incremental sends, or clear retained state. Incremental upload implies cross-turn reuse.
  */
 export function bindCodexWsIncrementalConfig(config: Pick<OcxConfig, "codexWsIncrementalUpload" | "codexWsReuseAcrossTurns">): void {
   const enabled = config.codexWsIncrementalUpload === true;

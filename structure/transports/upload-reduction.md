@@ -51,7 +51,8 @@ Socket continuation follows the [incremental contract](#incremental-websocket-co
 lossy outbound history policy described in [Responses transport](responses.md#responses-httpsse).
 Invalid disk values disable the option; `src/config/diagnostics.ts` rejects them on candidate writes. The live state-store
 registration in `src/lib/state-store-registrations.ts` binds the policy without editing retained conversation data.
-`codexWsIncrementalUpload` is a default-off boolean bound from that same live registration
-(install and reconcile), never from a detached `loadConfig()` read, and implies socket reuse;
+`codexWsIncrementalUpload` and `codexWsReuseAcrossTurns` are default-off booleans bound only from that
+same live registration (install and reconcile), never from a detached `loadConfig()` read such as `/api/sync`;
+incremental upload implies socket reuse;
 the [incremental transport contract](#incremental-websocket-continuation)
 owns completed-state, retention limits, counters and fallback behavior.
