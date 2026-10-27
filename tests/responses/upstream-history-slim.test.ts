@@ -57,14 +57,20 @@ describe("slimCodexHistoryJson", () => {
     expect(slimCodexHistoryJson(body)).toBeNull();
   });
 
-  test("leaves file ids and short urls in place", () => {
+  test("leaves file ids and remote urls in place, including long signed urls", () => {
+    const signedUrl = `https://example.test/a.png?signature=${"a".repeat(8_000)}`;
     const body = JSON.stringify({
       input: [
         user("earlier"),
         {
           type: "function_call_output",
           call_id: "call_file",
-          output: [{ type: "input_image", file_id: "file_123" }, { type: "input_image", image_url: "https://example.test/a.png" }],
+          output: [
+            { type: "input_image", file_id: "file_123" },
+            { type: "input_image", image_url: "https://example.test/a.png" },
+            { type: "input_image", image_url: signedUrl },
+            { type: "input_image", image_url: { url: signedUrl } },
+          ],
         },
         user("now"),
       ],

@@ -66,9 +66,8 @@ function utf8(text: string, start: number, end: number): string {
 
 function imageInlineBytes(part: Record<string, unknown>): number {
   const url = part.image_url;
-  if (typeof url === "string") return Buffer.byteLength(url);
-  if (isPlainObject(url) && typeof url.url === "string") return Buffer.byteLength(url.url);
-  return 0;
+  const value = typeof url === "string" ? url : isPlainObject(url) ? url.url : undefined;
+  return typeof value === "string" && /^data:/i.test(value) ? Buffer.byteLength(value) : 0;
 }
 
 function imageStub(bytes: number): Record<string, unknown> {
