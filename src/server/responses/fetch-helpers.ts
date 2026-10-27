@@ -419,15 +419,18 @@ export function providerFetch(
       };
       const fallback = ((url: Parameters<typeof globalThis.fetch>[0], fallbackInit?: RequestInit) =>
         httpFetch(url, { ...fallbackInit, [WS_FALLBACK_RECEIPT]: notifyOnce } as RequestInit, reacquirePacing, null)) as typeof globalThis.fetch;
-      const preparedWsInit = codexWsIncrementalUploadEnabled() ? (slimOutboundCodexHistory(input, init) ?? init) : init;
-      const wsSend = codexWsExecutor((url: Parameters<typeof globalThis.fetch>[0], wsInit?: RequestInit) => codexWsUpstreamFetch(String(url), wsInit ?? preparedWsInit,
+      // History slimming runs on the final URL and init of every WS send, including an init a
+      // dispatchOverride rebuilt, so an override never re-expands the outbound history.
+      const finalWsInit = (url: Parameters<typeof globalThis.fetch>[0], wsInit: RequestInit): RequestInit =>
+        codexWsIncrementalUploadEnabled() ? (slimOutboundCodexHistory(url, wsInit) ?? wsInit) : wsInit;
+      const wsSend = codexWsExecutor((url: Parameters<typeof globalThis.fetch>[0], wsInit?: RequestInit) => codexWsUpstreamFetch(String(url), finalWsInit(url, wsInit ?? init),
         fallback, runtime, options.onCodexWsQuota, options.beforeDispatch, options.nativeControl,
         async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, explicitWsProxy),
         { provider, http: markEgressTransparentExecutor(fallback) });
       // A WS frame is a physical send like any other, so it runs the same override: that is where a
       // key-auth send is committed to its attempt row and the send budget is rebound to the
       // credential that left. Without it a key-auth WS turn logged `sendCount: 0`.
-      return options.dispatchOverride ? options.dispatchOverride(input, init, wsSend, reacquirePacing) : wsSend(input, preparedWsInit);
+      return options.dispatchOverride ? options.dispatchOverride(input, init, wsSend, reacquirePacing) : wsSend(input, init);
     }
     return httpFetch(input, init, reacquirePacing);
   };

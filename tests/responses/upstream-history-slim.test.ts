@@ -131,6 +131,34 @@ describe("slimCodexHistoryJson", () => {
 });
 
 describe("slimOutboundCodexHistory", () => {
+  test("budgets a fragmented older tool output against the whole item", () => {
+    // Eight 20 KiB parts: no single field crosses 32 KiB, but the item is ~160 KiB.
+    const parts = Array.from({ length: 8 }, (_, index) => ({ type: "input_text", text: String(index).padEnd(20 * 1024, "x") }));
+    const body = JSON.stringify({
+      input: [user("run"), { type: "custom_tool_call_output", call_id: "call_parts", output: parts }, user("next")],
+    });
+    const next = slimCodexHistoryJson(body)!;
+    expect(next).not.toBeNull();
+    const item = (JSON.parse(next) as { input: Array<Record<string, unknown>> }).input[1]!;
+    expect(item.call_id).toBe("call_parts");
+    expect(Buffer.byteLength(JSON.stringify(item))).toBeLessThanOrEqual(32 * 1024);
+    const texts = (item.output as Array<{ text: string }>).map(part => part.text);
+    expect(texts).toHaveLength(8);
+    expect(texts.every(text => text.includes("tool output shortened"))).toBe(true);
+    expect(slimCodexHistoryJson(next)).toBeNull();
+  });
+
+  test("shortens every part of an output too fragmented to reach the limit, beyond 64 parts", () => {
+    const parts = Array.from({ length: 80 }, (_, index) => ({ type: "input_text", text: String(index).padEnd(8 * 1024, "y") }));
+    const body = JSON.stringify({
+      input: [user("run"), { type: "function_call_output", call_id: "call_many", output: parts }, user("next")],
+    });
+    const item = (JSON.parse(slimCodexHistoryJson(body)!) as { input: Array<Record<string, unknown>> }).input[1]!;
+    const texts = (item.output as Array<{ text: string }>).map(part => part.text);
+    expect(texts.every(text => text.includes("tool output shortened"))).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(item))).toBeLessThan(Buffer.byteLength(JSON.stringify(parts)) / 2);
+  });
+
   test("stays off until the live config says codex, including compact", () => {
     bindUpstreamHistorySlimConfig({});
     expect(currentUpstreamHistorySlim()).toBe("off");

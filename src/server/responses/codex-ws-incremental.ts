@@ -58,7 +58,15 @@ function envelopeKey(body: Obj): string {
 }
 export type IncrementalPlan = { session: object; frameText: string; fullBytes: number; sentBytes: number;
   delta: boolean; envelope: string; items: string[]; retainable: boolean };
+/** True while any socket holds an acknowledged prefix, so an oversized create could still shrink to a delta. */
+export function codexWsIncrementalHasRetainedState(): boolean { return states.size > 0; }
+// The planner is an optimization only: a failure (for example a RangeError from deeply nested
+// items) must forget that socket's prefix and fall back to a full frame, never escape into the
+// caller after the session was reserved, where it would leave the pooled socket busy.
 export function prepareIncrementalFrame(session: object, fullFrame: string): IncrementalPlan | undefined {
+  try { return planIncrementalFrame(session, fullFrame); } catch { forgetIncrementalSession(session); return undefined; }
+}
+function planIncrementalFrame(session: object, fullFrame: string): IncrementalPlan | undefined {
   if (!codexWsIncrementalUploadEnabled()) return undefined;
   let body: unknown;
   try { body = JSON.parse(fullFrame); } catch { return undefined; }
@@ -90,6 +98,9 @@ export function recordIncrementalDispatch(plan: IncrementalPlan): void {
   counters.fullFrameBytes += plan.fullBytes; counters.sentFrameBytes += plan.sentBytes;
 }
 export function completeIncrementalFrame(plan: IncrementalPlan, response: unknown): void {
+  try { retainCompletedFrame(plan, response); } catch { forgetIncrementalSession(plan.session); }
+}
+function retainCompletedFrame(plan: IncrementalPlan, response: unknown): void {
   if (!codexWsIncrementalUploadEnabled() || !record(response) || response.status !== 'completed'
     || typeof response.id !== 'string' || !Array.isArray(response.output)) return;
   const items = [...plan.items, ...response.output.map(itemKey)];

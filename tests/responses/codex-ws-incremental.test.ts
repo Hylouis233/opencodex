@@ -8,6 +8,8 @@ import { setCodexWsReuseAcrossTurns } from '../../src/config/codex-ws-reuse-sett
 import { slimCodexHistoryJson } from '../../src/server/responses/history-slim';
 import { codexWsUpstreamFetch } from '../../src/server/responses/ws-upstream';
 import { codexWsPool } from '../../src/server/responses/codex-ws-pool';
+import { providerFetch } from '../../src/server/responses/fetch-helpers';
+import { bindUpstreamHistorySlimConfig } from '../../src/server/responses/history-slim';
 beforeEach(() => { enable(true); setCodexWsReuseAcrossTurns(true); });
 afterAll(() => { enable(false); setCodexWsReuseAcrossTurns(false); });
 const message = (role: string, text: string) => ({ type: 'message', role,
@@ -181,4 +183,98 @@ test('physical WS exchange sends delta on the same explicit proxy and new reques
     codexWsPool.dispose(); globalThis.WebSocket = original;
     for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
   }
+});
+
+test('a planner failure on deeply nested items falls back to a full frame and drops the prefix', () => {
+  const session = {}; seed(session);
+  const nested = JSON.parse('['.repeat(20_000) + ']'.repeat(20_000));
+  const deep = { type: 'function_call_output', call_id: 'call_deep', output: nested };
+  const full = frame([message('user', 'prefix'), answer, deep]);
+  expect(() => prepare(session, full)).not.toThrow();
+  expect(prepare(session, full)).toBeUndefined();
+  const next = prepare(session, frame([message('user', 'prefix')]))!;
+  expect(next.delta).toBe(false);
+  expect(() => complete(next, { id: 'resp-deep', status: 'completed', output: [deep] })).not.toThrow();
+  // The failed completion retained nothing, so the next turn is a full create.
+  expect(prepare(session, frame([message('user', 'prefix'), answer, message('user', 'after')]))!.delta).toBe(false);
+  forget(session);
+});
+
+class RecordingSocket extends EventTarget {
+  static all: RecordingSocket[] = [];
+  readyState = 0;
+  frames: any[] = [];
+  constructor(readonly url: string, readonly options: unknown) {
+    super(); RecordingSocket.all.push(this);
+    queueMicrotask(() => { this.readyState = 1; this.dispatchEvent(new Event('open')); });
+  }
+  send(text: string) {
+    this.frames.push(JSON.parse(text));
+    const id = 'response-' + this.frames.length;
+    queueMicrotask(() => {
+      this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.created', response: { id } }) }));
+      this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'response.completed', response: { id, status: 'completed', output: [answer] } }) }));
+    });
+  }
+  close() { if (this.readyState === 3) return; this.readyState = 3; this.dispatchEvent(new Event('close')); }
+  ref() {}
+  unref() {}
+}
+
+async function withRecordingSockets(run: () => Promise<void>): Promise<void> {
+  const original = globalThis.WebSocket;
+  const keys = ['HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy'];
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  RecordingSocket.all = [];
+  globalThis.WebSocket = RecordingSocket as unknown as typeof WebSocket;
+  try { await run(); } finally {
+    codexWsPool.dispose(); globalThis.WebSocket = original; RecordingSocket.all = [];
+    for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+  }
+}
+
+const CODEX_URL = 'https://chatgpt.com/backend-api/codex/responses';
+const wsInit = (input: any[], request: string): RequestInit => ({ method: 'POST',
+  headers: { authorization: 'Bearer fixture', 'chatgpt-account-id': 'fixture-account',
+    'thread-id': 'thread-1', 'x-client-request-id': request },
+  body: JSON.stringify({ ...envelope, type: undefined, stream: true, input }) });
+
+test('a cold oversized create goes to SSE without dialing a socket', async () => {
+  await withRecordingSockets(async () => {
+    let fallbackCalls = 0;
+    const fallback = (async () => { fallbackCalls++; return new Response('sse'); }) as unknown as typeof fetch;
+    const big = message('user', 'A'.repeat(17 * 1024 * 1024));
+    const response = await codexWsUpstreamFetch(CODEX_URL, wsInit([big], 'request-cold'), fallback, '1.4.4');
+    expect(await response.text()).toBe('sse');
+    expect(fallbackCalls).toBe(1);
+    expect(RecordingSocket.all).toHaveLength(0);
+  });
+});
+
+test('history slimming applies to the init a WS dispatch override supplies', async () => {
+  // beforeEach enables codexWsIncrementalUpload; with upstreamHistorySlim both options are on.
+  const live: { upstreamHistorySlim?: 'off' | 'codex' } = { upstreamHistorySlim: 'codex' };
+  bindUpstreamHistorySlimConfig(live);
+  try {
+    await withRecordingSockets(async () => {
+      let overrides = 0;
+      let httpSends = 0;
+      const provider = Object.assign({ adapter: 'openai-responses', baseUrl: CODEX_URL },
+        { fetch: (async () => { httpSends++; return new Response('unexpected'); }) as unknown as typeof fetch });
+      const fetcher = providerFetch(provider as never, '1.4.4', {
+        // A rebuilt init (fresh object, same body) must still be slimmed before the WS frame.
+        dispatchOverride: async (input, init, execute) => { overrides++; return execute(input, { ...init }); },
+      });
+      const image = { type: 'input_image', image_url: 'data:image/png;base64,' + 'A'.repeat(8_000) };
+      const input = [{ ...message('user', 'look'), content: [{ type: 'input_text', text: 'look' }, image] }, answer, message('user', 'again')];
+      expect(await (await fetcher(CODEX_URL, wsInit(input, 'request-override'))).text()).toContain('response.completed');
+      expect(overrides).toBe(1);
+      expect(httpSends).toBe(0);
+      expect(RecordingSocket.all).toHaveLength(1);
+      const sent = JSON.stringify(RecordingSocket.all[0]!.frames[0]);
+      expect(sent).not.toContain('data:image');
+      expect(sent).toContain('image omitted');
+    });
+  } finally { bindUpstreamHistorySlimConfig(null); }
 });

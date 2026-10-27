@@ -1,4 +1,4 @@
-import { codexWsIncrementalUploadEnabled, prepareIncrementalFrame } from "./codex-ws-incremental";
+import { codexWsIncrementalHasRetainedState, codexWsIncrementalUploadEnabled, prepareIncrementalFrame } from "./codex-ws-incremental";
 import { OPENAI_API_RESPONSES_URL } from "./native-response-control";
 import { isInjectionRequest } from "./native-injection-protocol";
 import type { NativeResponseControl } from "./native-response-control";
@@ -198,8 +198,10 @@ export async function codexWsUpstreamFetch(
   // streaming Response, so the oversized close can only be surfaced as a stream
   // error — and a resend at that point could double-generate. Measuring the
   // frame we are about to send keeps the whole failure mode unreachable.
+  // An oversized frame dials only when some socket already holds an acknowledged prefix that
+  // could turn it into a delta; a cold oversized create goes straight to SSE.
   const incrementalEligible = codexWsIncrementalUploadEnabled() && prepared.canonical && !control;
-  if (!incrementalEligible && codexWsCreateFrameExceedsLimit(frameText)) {
+  if ((!incrementalEligible || !codexWsIncrementalHasRetainedState()) && codexWsCreateFrameExceedsLimit(frameText)) {
     return sseFallback(url, init);
   }
 
