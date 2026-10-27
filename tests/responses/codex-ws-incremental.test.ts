@@ -1,14 +1,15 @@
 import { test, expect, beforeEach, afterAll } from 'bun:test';
-import { prepareIncrementalFrame as prepare, completeIncrementalFrame as complete,
+import { prepareIncrementalFrame, completeIncrementalFrame as complete,
   setCodexWsIncrementalUpload as enable, forgetIncrementalSession as forget,
-  codexWsIncrementalStats as stats } from '../../src/server/responses/codex-ws-incremental';
+  codexWsIncrementalStats as stats, codexWsCallerKey } from '../../src/server/responses/codex-ws-incremental';
 import { codexWsCreateFrameExceedsLimit } from '../../src/server/responses/codex-ws-wire';
 import { codexWsReuseIdentity } from '../../src/server/responses/codex-ws-pool';
 import { setCodexWsReuseAcrossTurns } from '../../src/config/codex-ws-reuse-setting';
 import { slimCodexHistoryJson } from '../../src/server/responses/history-slim';
 import { codexWsUpstreamFetch } from '../../src/server/responses/ws-upstream';
 import { codexWsPool } from '../../src/server/responses/codex-ws-pool';
-import { providerFetch } from '../../src/server/responses/fetch-helpers';
+import { providerFetch, codexWsAdmittedCaller } from '../../src/server/responses/fetch-helpers';
+import { resolveContextPrincipal } from '../../src/server/auth-cors';
 import { bindUpstreamHistorySlimConfig } from '../../src/server/responses/history-slim';
 beforeEach(() => { enable(false); enable(true); setCodexWsReuseAcrossTurns(true); });
 afterAll(() => { enable(false); setCodexWsReuseAcrossTurns(false); });
@@ -18,6 +19,8 @@ const envelope = { type: 'response.create', model: 'gpt-6.1-sol', store: false, 
   tools: [], client_metadata: { thread_id: 'thread-1', turn_id: 'turn-1' } };
 const frame = (input: any[], extras = {}) => JSON.stringify({ ...envelope, ...extras, input });
 const answer = { ...message('assistant', 'hello'), id: 'msg-server', status: 'completed' };
+const ALICE = 'principal:alice';
+const prepare = (session: object, text: string, caller: string | undefined = ALICE) => prepareIncrementalFrame(session, text, caller);
 function seed(session: object, input = [message('user', 'prefix')]) {
   const plan = prepare(session, frame(input))!;
   complete(plan, { id: 'resp-original', status: 'completed', output: [answer] });
@@ -31,6 +34,49 @@ test('only acknowledged output anchors an exact prefix and new turn metadata per
   expect(JSON.parse(plan.frameText).previous_response_id).toBe('resp-original');
   expect(JSON.parse(plan.frameText).input).toEqual([message('user', 'next')]);
   forget(session);
+});
+test('only the admitted caller that seeded a prefix may continue it', () => {
+  const next = frame([message('user', 'prefix'), answer, message('user', 'next')]);
+  // Same caller still sends a delta.
+  const same = {}; seed(same);
+  expect(prepare(same, next, ALICE)!.delta).toBe(true); forget(same);
+  // A different caller on the same socket state falls back to the full frame and the
+  // retained prefix is dropped, so the original caller cannot be continued afterwards either.
+  const shared = {}; seed(shared);
+  const other = prepare(shared, next, 'principal:bob')!;
+  expect(other.delta).toBe(false);
+  expect(other.frameText).toBe(next);
+  expect(JSON.parse(other.frameText).previous_response_id).toBeUndefined();
+  expect(prepare(shared, next, ALICE)!.delta).toBe(false);
+  // A request without an admitted caller neither inherits nor seeds a prefix.
+  const anonymous = {}; seed(anonymous);
+  const before = stats().unidentifiedCaller;
+  expect(prepareIncrementalFrame(anonymous, next, undefined)).toBeUndefined();
+  expect(stats().unidentifiedCaller).toBe(before + 1);
+  expect(prepare(anonymous, next, ALICE)!.delta).toBe(false);
+  forget(shared); forget(anonymous);
+});
+test('caller keys come only from admission state', () => {
+  expect(codexWsCallerKey('abc', { kind: 'configured' })).toBe('principal:abc');
+  expect(codexWsCallerKey('abc', { kind: 'loopback' })).toBe('principal:abc');
+  expect(codexWsCallerKey(undefined, { kind: 'loopback' })).toBe('loopback');
+  expect(codexWsCallerKey(undefined, { kind: 'environment' })).toBeUndefined();
+  expect(codexWsCallerKey(undefined, undefined)).toBeUndefined();
+  const config = { apiKeys: [{ id: 'k1', key: 'ocx-key-one-0123456789' }] } as any;
+  const req = (headers: Record<string, string> = {}) => new Request('http://127.0.0.1/v1/responses', { headers });
+  const loopback = { kind: 'loopback', source: 'loopback' } as const;
+  const caller = (request: Request, options: { replayPrincipal?: { clientPrincipalId: string | undefined }; admission?: any }) =>
+    codexWsAdmittedCaller(options, () => resolveContextPrincipal(request, config, options.admission));
+  expect(caller(req(), { admission: { kind: 'configured', keyId: 'k1', source: 'bearer', contextPrincipalId: 'p1' } }))
+    .toBe('principal:p1');
+  expect(caller(req({ 'x-opencodex-api-key': 'ocx-key-one-0123456789' }), { admission: loopback }))
+    .toMatch(/^principal:[0-9a-f]{64}$/);
+  expect(caller(req({ 'x-opencodex-api-key': 'not-a-key' }), { admission: loopback })).toBe('loopback');
+  expect(caller(req(), { admission: { kind: 'environment', source: 'bearer' } })).toBeUndefined();
+  expect(caller(req(), { admission: undefined })).toBeUndefined();
+  // A combo attempt carries the principal captured before provisional credentials were stripped.
+  expect(caller(req(), { replayPrincipal: { clientPrincipalId: 'p2' }, admission: loopback }))
+    .toBe('principal:p2');
 });
 test('edited history, changed instructions and tool arguments preserve full requests', () => {
   for (const change of ['prefix', 'instructions', 'tools']) {
@@ -160,7 +206,7 @@ test('physical WS exchange sends delta on the same explicit proxy and new reques
     body: JSON.stringify({ ...envelope, type: undefined, stream: true, input }) });
   const run = (input: any[], request: string) => codexWsUpstreamFetch(
     'https://chatgpt.com/backend-api/codex/responses', init(input, request), fallback, '1.4.4',
-    undefined, undefined, undefined, undefined, undefined, undefined, 'http://proxy.example:8080');
+    undefined, undefined, undefined, undefined, undefined, undefined, 'http://proxy.example:8080', ALICE);
   try {
     const first = [message('user', 'retained input')];
     expect(await (await run(first, 'request-one')).text()).toContain('response.completed');
@@ -239,6 +285,36 @@ const wsInit = (input: any[], request: string): RequestInit => ({ method: 'POST'
   headers: { authorization: 'Bearer fixture', 'chatgpt-account-id': 'fixture-account',
     'thread-id': 'thread-1', 'x-client-request-id': request },
   body: JSON.stringify({ ...envelope, type: undefined, stream: true, input }) });
+
+test('a second admitted caller on one credential, account and thread gets a full upload', async () => {
+  await withRecordingSockets(async () => {
+    let fallbackCalls = 0;
+    const fallback = (async () => { fallbackCalls++; return new Response('unexpected'); }) as unknown as typeof fetch;
+    const run = (input: any[], request: string, caller: string | undefined) => codexWsUpstreamFetch(CODEX_URL, wsInit(input, request), fallback, '1.4.4',
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, caller);
+    const first = [message('user', 'alice private turn')];
+    const follow = [...first, answer, message('user', 'next')];
+    await (await run(first, 'alice-one', ALICE)).text();
+    // Different caller, identical upstream credential/account/thread and a matching prefix.
+    await (await run(follow, 'bob-one', 'principal:bob')).text();
+    // No admitted caller at all.
+    await (await run(follow, 'anon-one', undefined)).text();
+    // The original caller still continues its own prefix.
+    await (await run(follow, 'alice-two', ALICE)).text();
+    const frames = RecordingSocket.all.flatMap(socket => socket.frames);
+    const byRequest = (id: string) => frames.find(f => f.client_metadata['x-client-request-id'] === id);
+    for (const id of ['bob-one', 'anon-one']) {
+      expect(byRequest(id).previous_response_id).toBeUndefined();
+      expect(byRequest(id).input).toEqual(follow);
+    }
+    expect(byRequest('alice-two').previous_response_id).toBe('response-1');
+    expect(byRequest('alice-two').input).toEqual([message('user', 'next')]);
+    const aliceSocket = RecordingSocket.all.find(socket => socket.frames.some(f => f.client_metadata['x-client-request-id'] === 'alice-one'))!;
+    expect(aliceSocket.frames.map(f => f.client_metadata['x-client-request-id'])).toEqual(['alice-one', 'alice-two']);
+    expect(RecordingSocket.all).toHaveLength(3);
+    expect(fallbackCalls).toBe(0);
+  });
+});
 
 test('a cold oversized create goes to SSE without dialing a socket', async () => {
   await withRecordingSockets(async () => {

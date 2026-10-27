@@ -43,8 +43,8 @@ function frame(turn: string, model = "fixture-model"): string {
   });
 }
 
-function identity(turn: string, model = "fixture-model", authorization = headers.authorization) {
-  return codexWsReuseIdentity(CODEX_RESPONSES_HTTP_URL, { ...headers, authorization }, frame(turn, model));
+function identity(turn: string, model = "fixture-model", authorization = headers.authorization, caller?: string) {
+  return codexWsReuseIdentity(CODEX_RESPONSES_HTTP_URL, { ...headers, authorization }, frame(turn, model), undefined, undefined, caller);
 }
 
 const pools: CodexWsPool[] = [];
@@ -139,6 +139,33 @@ test("the wait queue is FIFO, depth limited, and abortable", async () => {
   first!.release("response-1");
   expect(await queued[0]).toBe(first);
   expect(Socket.all).toHaveLength(1);
+});
+
+test("the admitted caller scopes pooled sockets, including queued acquisition", async () => {
+  setCodexWsReuseAcrossTurns(true);
+  const retained = pool();
+  const alice = identity("turn-a", "fixture-model", headers.authorization, "principal:alice")!;
+  const bob = identity("turn-b", "fixture-model", headers.authorization, "principal:bob")!;
+  const unidentified = identity("turn-c")!;
+  expect(identity("turn-z", "fixture-model", headers.authorization, "principal:alice")!.key).toBe(alice.key);
+  expect(new Set([alice.scope, bob.scope, unidentified.scope]).size).toBe(3);
+  expect(new Set([alice.key, bob.key, unidentified.key]).size).toBe(3);
+  const held = retained.acquire(alice, CODEX_RESPONSES_HTTP_URL, headers);
+  await opened();
+  // Another caller on the same credential, account and thread never queues for, or receives,
+  // the first caller's socket; it gets its own connection at once.
+  const other = await retained.acquireWaiting(bob, CODEX_RESPONSES_HTTP_URL, headers, undefined);
+  expect(other).not.toBeNull();
+  expect(other).not.toBe(held);
+  const anonymous = await retained.acquireWaiting(unidentified, CODEX_RESPONSES_HTTP_URL, headers, undefined);
+  expect(anonymous).not.toBeNull();
+  expect(anonymous).not.toBe(held);
+  expect(anonymous).not.toBe(other);
+  const same = retained.acquireWaiting(alice, CODEX_RESPONSES_HTTP_URL, headers, undefined);
+  held!.release("response-1");
+  expect(await same).toBe(held);
+  expect(Socket.all).toHaveLength(3);
+  expect(retained.snapshot().size).toBe(3);
 });
 
 test("reuse drops turn headers from the handshake", () => {

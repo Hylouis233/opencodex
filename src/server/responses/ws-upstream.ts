@@ -168,6 +168,8 @@ export async function codexWsUpstreamFetch(
   /** Opt-in pre-output refusal hold (#6969); see codexWsExchange. */
   preOutputRefusalHold?: CodexWsPreOutputRefusalHold,
   explicitProxy?: string,
+  /** Trusted admitted caller (codexWsCallerKey); scopes pooled sockets and incremental prefixes. */
+  caller?: string,
 ): Promise<Response> {
   const prepared = prepareCodexWsRequest(url, init);
   if (!prepared) return sseFallback(url, prepareCodexHttpInit(url, init));
@@ -200,7 +202,8 @@ export async function codexWsUpstreamFetch(
   // frame we are about to send keeps the whole failure mode unreachable.
   // An oversized frame dials only when some socket already holds an acknowledged prefix that
   // could turn it into a delta; a cold oversized create goes straight to SSE.
-  const incrementalEligible = codexWsIncrementalUploadEnabled() && prepared.canonical && !control;
+  // Without an admitted caller there is no prefix this request may inherit or seed.
+  const incrementalEligible = codexWsIncrementalUploadEnabled() && prepared.canonical && !control && caller !== undefined;
   if ((!incrementalEligible || !codexWsIncrementalHasRetainedState()) && codexWsCreateFrameExceedsLimit(frameText)) {
     return sseFallback(url, init);
   }
@@ -234,7 +237,7 @@ export async function codexWsUpstreamFetch(
     // per-turn headers planning drops from the upgrade still reach it inside the frame metadata.
     outboundCredentials().remember(headers);
     outboundCredentials().remember(dial.headers);
-    const identity = control ? null : codexWsReuseIdentity(url, dial.headers, frameText, dial.proxy, dial.url);
+    const identity = control ? null : codexWsReuseIdentity(url, dial.headers, frameText, dial.proxy, dial.url, caller);
     const reuseAcrossTurns = identity !== null && codexWsReuseAcrossTurnsEnabled();
     const pooled = identity
       ? reuseAcrossTurns
@@ -252,7 +255,7 @@ export async function codexWsUpstreamFetch(
   } catch {
     return sseFallback(url, init);
   }
-  const incrementalPlan = incrementalEligible ? prepareIncrementalFrame(session, frameText) : undefined;
+  const incrementalPlan = incrementalEligible ? prepareIncrementalFrame(session, frameText, caller) : undefined;
   const outboundPrepared = incrementalPlan ? { ...prepared, frameText: incrementalPlan.frameText } : prepared;
   if (codexWsCreateFrameExceedsLimit(outboundPrepared.frameText)) {
     session.dispose();

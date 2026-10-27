@@ -1,6 +1,6 @@
 import { slimOutboundCodexHistory } from "./history-slim";
 import type { NativeResponseControl } from "./native-response-control";
-import { codexWsIncrementalUploadEnabled } from "./codex-ws-incremental";
+import { codexWsCallerKey, codexWsIncrementalUploadEnabled } from "./codex-ws-incremental";
 import { PROVIDER_HEADER_DEADLINE as HEADER_DEADLINE, type ProviderHeaderDeadline as HeaderDeadline } from "../../lib/provider-admission-wait";
 import type { CodexWsPreOutputRefusalHold } from "./codex-ws-wire";
 import type { Server } from "bun";
@@ -262,6 +262,20 @@ const codexWsExecutor = (send: (input: Parameters<typeof globalThis.fetch>[0], i
 export const codexWsExecutorBinding = (execute: unknown): CodexWsExecutor | undefined =>
   typeof execute === "function" ? codexWsExecutors.get(execute) : undefined;
 
+/**
+ * Trusted caller key for pooled Codex WS reuse (codexWsCallerKey), taken from data-plane admission
+ * and never from the request body. A combo attempt has stripped provisional credentials, so it
+ * carries the principal captured at admission, matching request-prepare and core-combo; otherwise
+ * `contextPrincipal` resolves it (resolveContextPrincipal).
+ */
+export function codexWsAdmittedCaller(options: {
+  readonly replayPrincipal?: Readonly<{ clientPrincipalId: string | undefined }>;
+  readonly admission?: { readonly kind: string };
+}, contextPrincipal: () => string | undefined): string | undefined {
+  const principal = options.replayPrincipal ? options.replayPrincipal.clientPrincipalId : contextPrincipal();
+  return codexWsCallerKey(principal, options.admission);
+}
+
 export interface ProviderFetchOptions {
   accountAutoPause?: (name: string, provider: OcxProviderConfig, headers: Headers) => AccountAutoPauseObserver | undefined;
   /**
@@ -292,6 +306,11 @@ export interface ProviderFetchOptions {
    * restores the projection afterwards (restoreCodexWsPreOutputRefusal) may set it.
    */
   preOutputRefusalHold?: CodexWsPreOutputRefusalHold;
+  /**
+   * Trusted admitted caller for a Codex WebSocket send (codexWsCallerKey). Pooled sockets and
+   * incremental prefixes are scoped to it; absent means no caller may continue a prefix.
+   */
+  codexWsCaller?: string;
   /** Revalidate/rebuild a queued request at its physical send boundary, after pacing. */
   dispatchOverride?: (input: Parameters<typeof globalThis.fetch>[0], init: RequestInit, execute: typeof globalThis.fetch,
     reacquirePacing?: (provider: OcxProviderConfig, modelId?: string) => Promise<void>) => Promise<Response>;
@@ -425,7 +444,7 @@ export function providerFetch(
         codexWsIncrementalUploadEnabled() ? (slimOutboundCodexHistory(url, wsInit) ?? wsInit) : wsInit;
       const wsSend = codexWsExecutor((url: Parameters<typeof globalThis.fetch>[0], wsInit?: RequestInit) => codexWsUpstreamFetch(String(url), finalWsInit(url, wsInit ?? init),
         fallback, runtime, options.onCodexWsQuota, options.beforeDispatch, options.nativeControl,
-        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, explicitWsProxy),
+        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, explicitWsProxy, options.codexWsCaller),
         { provider, http: markEgressTransparentExecutor(fallback) });
       // A WS frame is a physical send like any other, so it runs the same override: that is where a
       // key-auth send is committed to its attempt row and the send budget is rebound to the
