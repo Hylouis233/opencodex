@@ -1,3 +1,4 @@
+import { completeIncrementalFrame, recordIncrementalDispatch, type IncrementalPlan } from "./codex-ws-incremental";
 import { NativeSteeringError } from "./native-steering";
 import { mergeSteeringContinuation } from "./native-steering-settings";
 import { markNativeControlResponse } from "./native-response-control";
@@ -17,6 +18,7 @@ import { UPGRADE_DEADLINE_MS, CODEX_WS_LIVENESS_PING_INTERVAL_MS, CODEX_WS_RESPO
   markCodexWsPreOutputRefusal, type CodexWsPreOutputRefusalHold } from "./codex-ws-wire";
 
 interface ExchangeOptions {
+  incrementalPlan?: IncrementalPlan;
   nativeControl?: NativeResponseControl;
   beforeContinuation?: () => Promise<void>;
   session: CodexWsSession;
@@ -565,6 +567,7 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
       }
       try {
         ws.send(frameText);
+        if (options.incrementalPlan) recordIncrementalDispatch(options.incrementalPlan);
         sentAt = Date.now();
       } catch {
         if (received || responseCommitted) {
@@ -727,6 +730,9 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
         // count — the happy path never pays it.
         if (committedResponse) {
           markCodexWsStage(committedResponse, stageRecord(null));
+        }
+        if (completedId && options.incrementalPlan && type === "response.completed") {
+          completeIncrementalFrame(options.incrementalPlan, (normalized.payload as { response?: unknown }).response);
         }
         session.release(completedId);
         if (refusalStatus !== undefined && refusalHeaders && refusalPrelude && !responseCommitted) {

@@ -1,4 +1,6 @@
+import { slimOutboundCodexHistory } from "./history-slim";
 import type { NativeResponseControl } from "./native-response-control";
+import { codexWsIncrementalUploadEnabled } from "./codex-ws-incremental";
 import { PROVIDER_HEADER_DEADLINE as HEADER_DEADLINE, type ProviderHeaderDeadline as HeaderDeadline } from "../../lib/provider-admission-wait";
 import type { CodexWsPreOutputRefusalHold } from "./codex-ws-wire";
 import type { Server } from "bun";
@@ -360,6 +362,7 @@ export function providerFetch(
       // mutator, and the copy it receives is deliberately not threaded onward. `Connection`
       // is decided inside `dispatch`, which runs after this, so the fresh-connection policy
       // wins regardless of what any caller or hook put in the header.
+      init = slimOutboundCodexHistory(input, init);
       options.beforeDispatch?.(new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)));
       // No proxy option is attached here: a `dispatchOverride` may rebuild this request against
       // a different destination, so the route is decided at the physical send instead.
@@ -396,7 +399,11 @@ export function providerFetch(
         return httpFetch(input, init, reacquirePacing);
       }
       const egress = egressFor(input);
-      if (providerEgressIsExplicit(egress)) {
+      const explicitWsProxy = codexWsIncrementalUploadEnabled()
+        && input === "https://chatgpt.com/backend-api/codex/responses"
+        && !(provider as OcxProviderConfig & { fetch?: unknown }).fetch
+        && egress.kind === "proxy" && egress.transport === "http" ? egress.proxyUrl : undefined;
+      if (providerEgressIsExplicit(egress) && !explicitWsProxy) {
         warnEgressWebsocketDowngradeOnce(providerName, describeProviderEgressForLog(egress));
         return httpFetch(input, init, reacquirePacing);
       }
@@ -412,14 +419,15 @@ export function providerFetch(
       };
       const fallback = ((url: Parameters<typeof globalThis.fetch>[0], fallbackInit?: RequestInit) =>
         httpFetch(url, { ...fallbackInit, [WS_FALLBACK_RECEIPT]: notifyOnce } as RequestInit, reacquirePacing, null)) as typeof globalThis.fetch;
-      const wsSend = codexWsExecutor((url: Parameters<typeof globalThis.fetch>[0], wsInit?: RequestInit) => codexWsUpstreamFetch(String(url), wsInit ?? init,
+      const preparedWsInit = codexWsIncrementalUploadEnabled() ? (slimOutboundCodexHistory(input, init) ?? init) : init;
+      const wsSend = codexWsExecutor((url: Parameters<typeof globalThis.fetch>[0], wsInit?: RequestInit) => codexWsUpstreamFetch(String(url), wsInit ?? preparedWsInit,
         fallback, runtime, options.onCodexWsQuota, options.beforeDispatch, options.nativeControl,
-        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold),
+        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, explicitWsProxy),
         { provider, http: markEgressTransparentExecutor(fallback) });
       // A WS frame is a physical send like any other, so it runs the same override: that is where a
       // key-auth send is committed to its attempt row and the send budget is rebound to the
       // credential that left. Without it a key-auth WS turn logged `sendCount: 0`.
-      return options.dispatchOverride ? options.dispatchOverride(input, init, wsSend, reacquirePacing) : wsSend(input, init);
+      return options.dispatchOverride ? options.dispatchOverride(input, init, wsSend, reacquirePacing) : wsSend(input, preparedWsInit);
     }
     return httpFetch(input, init, reacquirePacing);
   };

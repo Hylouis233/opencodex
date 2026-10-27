@@ -48,6 +48,19 @@
   ],
   "docs": [
     {
+      "path": "transports/upload-reduction.md",
+      "tier": 3,
+      "title": "Optional Codex Upload Reduction",
+      "scope": "Opt-in lossy historical image/tool slimming and acknowledged native WS input-prefix deltas.",
+      "documents": [
+        "src/server/responses/history-slim.ts",
+        "src/server/responses/codex-ws-incremental.ts",
+        "src/config/",
+        "src/lib/state-store-registrations.ts",
+        "src/server/management/system-routes.ts"
+      ]
+    },
+    {
       "path": "quota-snapshots.md",
       "tier": 4,
       "title": "Account Quota Snapshots",

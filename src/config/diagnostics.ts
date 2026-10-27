@@ -1,3 +1,4 @@
+import { upstreamHistorySlimConfigError } from "../server/responses/history-slim";
 import { readExistingSpendSalt, spendPoolAliasesError, validatePoolAliasOwners } from "../lib/spend-pool-alias-validation";
 import { isSubagentModelEntry, rawSubagentModelForce } from "./subagent-models";
 import { validRemainingQuotaAccountIds } from "../codex/account-use-remaining";
@@ -743,6 +744,7 @@ export function validateConfigCandidate(value: unknown): { ok: true; config: Ocx
     ?? appOwnedMemoryBudgetError(value)
     ?? upstreamHostCircuitThresholdError(value)
     ?? upstreamRequestCompressionError(value)
+    ?? upstreamHistorySlimConfigError(value)
     ?? plaintextV2AgentMessagesError(value)
     ?? agentTaskRecoveryError(value)
     ?? quotaResetNotifyError(value)

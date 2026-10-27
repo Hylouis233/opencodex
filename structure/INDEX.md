@@ -45,6 +45,7 @@ The wire surfaces a client actually talks to.
 
 | Doc | Scope |
 | --- | --- |
+| [`transports/upload-reduction.md`](transports/upload-reduction.md) | Opt-in lossy historical image/tool slimming and acknowledged native WS input-prefix deltas. |
 | [`remote-messaging.md`](remote-messaging.md) | Explicit peer enrollment, connection-bound capabilities, bounded foreground SSH ownership and queued remote replies. |
 | [`local-messaging.md`](local-messaging.md) | Command-local metadata discovery, Unix RPC queued submission, peer envelopes, receipts and owned lifecycle bounds. |
 | [`transports/byte-accounting.md`](transports/byte-accounting.md) | Request-copy and stream-buffer byte accounting shared by parsing, SSE rewriting, the adapters, and the translator budget, plus durable spill admission. |
@@ -239,7 +240,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/companion/` | [`overview.md`](overview.md)<br>[`gui-and-management-api.md`](gui-and-management-api.md)<br>[`companion.md`](companion.md) |
 | `src/compatibility/` | [`runtime.md`](runtime.md)<br>[`adapters/compatibility-contracts.md`](adapters/compatibility-contracts.md) |
 | `src/config.ts` | [`overview.md`](overview.md)<br>[`runtime.md`](runtime.md)<br>[`config.md`](config.md)<br>[`providers/openai-accounts.md`](providers/openai-accounts.md) |
-| `src/config/` | [`runtime.md`](runtime.md)<br>[`config.md`](config.md)<br>[`transports/native-reasoning-retention.md`](transports/native-reasoning-retention.md)<br>[`fallback-policy.md`](fallback-policy.md) |
+| `src/config/` | [`transports/upload-reduction.md`](transports/upload-reduction.md)<br>[`runtime.md`](runtime.md)<br>[`config.md`](config.md)<br>[`transports/native-reasoning-retention.md`](transports/native-reasoning-retention.md)<br>[`fallback-policy.md`](fallback-policy.md) |
 | `src/config/account-auto-pause-revisions.ts` | [`account-auto-pause.md`](account-auto-pause.md) |
 | `src/config/live-reconcile.ts` | [`pricing.md`](pricing.md) |
 | `src/config/persisted-mutation.ts` | [`runtime.md`](runtime.md) |
@@ -257,6 +258,7 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/lib/advisor-activation.ts` | [`advisor.md`](advisor.md) |
 | `src/lib/decision-quota-sink.ts` | [`providers/jev-decision.md`](providers/jev-decision.md) |
 | `src/lib/gui-pair-intent.ts` | [`remote-link.md`](remote-link.md) |
+| `src/lib/state-store-registrations.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/lib/windows-owner-acl.ts` | [`remote-link.md`](remote-link.md) |
 | `src/link/` | [`remote-messaging.md`](remote-messaging.md)<br>[`remote-link.md`](remote-link.md) |
 | `src/messaging/` | [`remote-messaging.md`](remote-messaging.md)<br>[`local-messaging.md`](local-messaging.md) |
@@ -312,11 +314,14 @@ A source area can be described by more than one doc, because these docs are orga
 | `src/server/management/link-routes.ts` | [`remote-link.md`](remote-link.md) |
 | `src/server/management/model-routes.ts` | [`pricing.md`](pricing.md) |
 | `src/server/management/quota-pool-routes.ts` | [`quota-pool.md`](quota-pool.md) |
+| `src/server/management/system-routes.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/server/responses/account-auto-pause-recovery.ts` | [`account-auto-pause.md`](account-auto-pause.md) |
 | `src/server/responses/advisor-plan-slot.ts` | [`advisor.md`](advisor.md) |
 | `src/server/responses/advisor-slot.ts` | [`advisor.md`](advisor.md) |
 | `src/server/responses/anthropic-thinking-recovery.ts` | [`transports/anthropic-thinking-recovery.md`](transports/anthropic-thinking-recovery.md) |
+| `src/server/responses/codex-ws-incremental.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/server/responses/compact.ts` | [`transports/responses-citations.md`](transports/responses-citations.md) |
+| `src/server/responses/history-slim.ts` | [`transports/upload-reduction.md`](transports/upload-reduction.md) |
 | `src/server/responses/opengateway-completion-guard.ts` | [`providers/opengateway.md`](providers/opengateway.md) |
 | `src/server/responses/passthrough-completion.ts` | [`providers/opengateway.md`](providers/opengateway.md) |
 | `src/server/responses/passthrough-dispatch.ts` | [`providers/opengateway.md`](providers/opengateway.md) |

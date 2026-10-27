@@ -1,0 +1,112 @@
+// Send only new input on acknowledged, account-bound native Codex WebSocket continuations.
+// No retry or upstream-response storage policy is changed by this module.
+let enabled = false;
+export function setCodexWsIncrementalUpload(value: boolean): void {
+  enabled = value;
+  if (!value) { states.clear(); retained = 0; }
+}
+export function codexWsIncrementalUploadEnabled(): boolean { return enabled; }
+const MAX_CONTEXT = 64 * 1024 * 1024;
+const MAX_RETAINED = 128 * 1024 * 1024;
+type Obj = Record<string, unknown>;
+type State = { envelope: string; items: string[]; id: string; bytes: number };
+const states = new Map<object, State>();
+let retained = 0;
+const counters = { fullCreates: 0, deltaCreates: 0, fullFrameBytes: 0, sentFrameBytes: 0,
+  cold: 0, prefixMismatch: 0, envelopeChanged: 0, ineligible: 0, overMemoryLimit: 0 };
+const record = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
+function stable(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
+  if (record(v)) return '{' + Object.keys(v).filter(k => v[k] !== undefined).sort()
+    .map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}';
+  return JSON.stringify(v) ?? "null";
+}
+function itemKey(v: unknown): string {
+  if (!record(v)) return stable(v);
+  const item = { ...v };
+  // The canonical forward adapter removes provider-issued item ids for store:false.
+  // call_id, ciphertext, roles, content, tool arguments and every other field remain exact.
+  if (['message', 'reasoning', 'function_call', 'custom_tool_call'].includes(String(item.type)) || typeof item.role === 'string') {
+    delete item.id; delete item.status;
+    if (record(item.metadata)) {
+      const metadata = { ...item.metadata }; delete metadata.turn_id;
+      if (Object.keys(metadata).length) item.metadata = metadata; else delete item.metadata;
+    }
+    if (record(item.internal_chat_message_metadata_passthrough)) {
+      const metadata = { ...item.internal_chat_message_metadata_passthrough };
+      delete metadata.turn_id; delete metadata.create_time;
+      if (Object.keys(metadata).length) item.internal_chat_message_metadata_passthrough = metadata;
+      else delete item.internal_chat_message_metadata_passthrough;
+    }
+  }
+  if (item.type === 'reasoning' && Array.isArray(item.content) && item.content.length === 0) delete item.content;
+  if (Array.isArray(item.content)) item.content = item.content.map(part => {
+    if (!record(part)) return part;
+    const p = { ...part };
+    if (Array.isArray(p.annotations) && p.annotations.length === 0) delete p.annotations;
+    if (Array.isArray(p.logprobs) && p.logprobs.length === 0) delete p.logprobs;
+    return p;
+  });
+  return stable(item);
+}
+function envelopeKey(body: Obj): string {
+  const value = { ...body };
+  delete value.input; delete value.type;
+  if (record(value.client_metadata)) {
+    const metadata = { ...value.client_metadata };
+    for (const key of ['turn_id', 'x-codex-turn-state', 'x-codex-turn-metadata', 'x-client-request-id']) delete metadata[key];
+    value.client_metadata = metadata;
+  }
+  return stable(value);
+}
+export type IncrementalPlan = { session: object; frameText: string; fullBytes: number; sentBytes: number;
+  delta: boolean; envelope: string; items: string[]; retainable: boolean };
+export function prepareIncrementalFrame(session: object, fullFrame: string): IncrementalPlan | undefined {
+  if (!enabled) return undefined;
+  let body: unknown;
+  try { body = JSON.parse(fullFrame); } catch { return undefined; }
+  if (!record(body) || body.type !== 'response.create' || !Array.isArray(body.input)
+    || body.previous_response_id != null || body.background === true
+    || Object.hasOwn(body, 'stream_id') || Object.hasOwn(body, 'generate')) {
+    counters.ineligible++; forgetIncrementalSession(session); return undefined;
+  }
+  const fullBytes = Buffer.byteLength(fullFrame);
+  const envelope = envelopeKey(body);
+  const items = body.input.map(itemKey);
+  const prior = states.get(session);
+  let frameText = fullFrame;
+  let delta = false;
+  if (!prior) counters.cold++;
+  else if (prior.envelope !== envelope) counters.envelopeChanged++;
+  else if (items.length <= prior.items.length || !prior.items.every((item, i) => items[i] === item)) counters.prefixMismatch++;
+  else {
+    const candidate = JSON.stringify({ ...body, previous_response_id: prior.id, input: body.input.slice(prior.items.length) });
+    if (Buffer.byteLength(candidate) < fullBytes) { frameText = candidate; delta = true; }
+  }
+  // An in-flight turn invalidates the previous local prefix. Unknown completion never seeds reuse.
+  forgetIncrementalSession(session);
+  return { session, frameText, fullBytes, sentBytes: Buffer.byteLength(frameText), delta,
+    envelope, items, retainable: fullBytes <= MAX_CONTEXT };
+}
+export function recordIncrementalDispatch(plan: IncrementalPlan): void {
+  counters[plan.delta ? 'deltaCreates' : 'fullCreates']++;
+  counters.fullFrameBytes += plan.fullBytes; counters.sentFrameBytes += plan.sentBytes;
+}
+export function completeIncrementalFrame(plan: IncrementalPlan, response: unknown): void {
+  if (!enabled || !record(response) || response.status !== 'completed'
+    || typeof response.id !== 'string' || !Array.isArray(response.output)) return;
+  const items = [...plan.items, ...response.output.map(itemKey)];
+  const bytes = items.reduce((n, item) => n + Buffer.byteLength(item), Buffer.byteLength(plan.envelope));
+  if (!plan.retainable || bytes > MAX_CONTEXT) { counters.overMemoryLimit++; return; }
+  forgetIncrementalSession(plan.session);
+  while (retained + bytes > MAX_RETAINED && states.size) forgetIncrementalSession(states.keys().next().value!);
+  states.set(plan.session, { envelope: plan.envelope, items, id: response.id, bytes }); retained += bytes;
+}
+export function forgetIncrementalSession(session: object): void {
+  const state = states.get(session); if (!state) return;
+  retained -= state.bytes; states.delete(session);
+}
+export function codexWsIncrementalStats() {
+  return { enabled, ...counters, retainedBytes: retained, retainedSessions: states.size,
+    savedFrameBytes: counters.fullFrameBytes - counters.sentFrameBytes };
+}

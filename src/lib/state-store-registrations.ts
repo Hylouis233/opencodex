@@ -1,3 +1,4 @@
+import { bindUpstreamHistorySlimConfig } from "../server/responses/history-slim";
 import {
   getConfigDir,
   reconcileConfigWarningMemos,
@@ -82,6 +83,7 @@ export function setLiveStateStoreConfig(config: OcxConfig): void {
   // The one place the server's live config object is installed; detached configs (catalog sync)
   // never come through here, so the outbound compression opt-in follows the running server only.
   bindUpstreamRequestCompressionConfig(config);
+  bindUpstreamHistorySlimConfig(config);
   notifyLiveConfigObservers(config);
 }
 

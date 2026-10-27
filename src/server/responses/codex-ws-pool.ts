@@ -1,3 +1,4 @@
+import { codexWsIncrementalUploadEnabled } from "./codex-ws-incremental";
 import { createHmac, randomBytes } from "node:crypto";
 import { codexWsReuseAcrossTurnsEnabled } from "../../config/codex-ws-reuse-setting";
 import { registerOptionalShutdownHook } from "../../lib/optional-shutdown-hooks";
@@ -79,7 +80,10 @@ export class CodexWsPool {
   private readonly idleMs: number;
   private readonly maxAgeMs: number;
   private readonly waitMs: number;
+  private readonly customIdle: boolean;
+  private readonly customAge: boolean;
   constructor(options: PoolOptions = {}) {
+    this.customIdle = options.idleMs !== undefined; this.customAge = options.maxAgeMs !== undefined;
     this.now = options.now ?? Date.now;
     this.maxSessions = options.maxSessions ?? CODEX_WS_POOL_MAX_SESSIONS;
     this.idleMs = options.idleMs ?? CODEX_WS_POOL_IDLE_MS;
@@ -194,7 +198,7 @@ export class CodexWsPool {
         return;
       }
       entry.idleAt = this.now();
-      if (entry.retired || entry.idleAt - entry.createdAt >= this.maxAgeMs) this.remove(entry);
+      if (entry.retired || entry.idleAt - entry.createdAt >= this.ageLimit()) this.remove(entry);
     }
     this.arm();
   }
@@ -209,10 +213,13 @@ export class CodexWsPool {
     const now = this.now();
     for (const entry of this.entries.values()) {
       if (!entry.session.busy && (entry.session.closed || entry.retired
-        || now - entry.idleAt >= this.idleMs || now - entry.createdAt >= this.maxAgeMs)) this.remove(entry);
+        || now - entry.idleAt >= this.idleLimit() || now - entry.createdAt >= this.ageLimit())) this.remove(entry);
     }
     this.arm();
   }
+
+  private idleLimit(): number { return !this.customIdle && codexWsIncrementalUploadEnabled() ? 180_000 : this.idleMs; }
+  private ageLimit(): number { return !this.customAge && codexWsIncrementalUploadEnabled() ? 1_200_000 : this.maxAgeMs; }
 
   private arm(): void {
     clearTimeout(this.timer);
@@ -224,7 +231,7 @@ export class CodexWsPool {
     }
     let deadline = Infinity;
     for (const entry of this.entries.values()) if (!entry.session.busy) {
-      deadline = Math.min(deadline, entry.idleAt + this.idleMs, entry.createdAt + this.maxAgeMs);
+      deadline = Math.min(deadline, entry.idleAt + this.idleLimit(), entry.createdAt + this.ageLimit());
     }
     if (!Number.isFinite(deadline)) return;
     this.timer = setTimeout(() => { this.timer = undefined; this.sweep(); }, Math.max(1, deadline - this.now()));

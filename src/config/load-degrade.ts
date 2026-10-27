@@ -1,3 +1,4 @@
+import { setCodexWsIncrementalUpload } from "../server/responses/codex-ws-incremental";
 import { setCodexWsReuseAcrossTurns } from "./codex-ws-reuse-setting";
 import { isSubagentModelEntry, rawSubagentModelForce } from "./subagent-models";
 import { chmodSync, existsSync } from "node:fs";
@@ -137,7 +138,8 @@ export function warnDegradedCompactionRouting(rawParsed: unknown, validated: Ocx
  */
 export function warnDegradedTopLevelOptIns(rawParsed: unknown, validated: OcxConfig): void {
   if (nativeReasoningRetentionConfigError(rawParsed)) console.warn("⚠️  invalid nativeReasoningRetention disabled; model and account switch allowances remain off");
-  setCodexWsReuseAcrossTurns(validated.codexWsReuseAcrossTurns === true);
+  setCodexWsIncrementalUpload(validated.codexWsIncrementalUpload === true);
+  setCodexWsReuseAcrossTurns(validated.codexWsReuseAcrossTurns === true || validated.codexWsIncrementalUpload === true);
   const retentionWarning = degradedReasoningRetentionWarning(rawParsed, validated);
   if (retentionWarning) console.warn(retentionWarning);
   if (compactionRecoveryConfigError(rawParsed)) console.warn("⚠️  invalid compactionRecovery disabled; the original compaction failure is preserved");
