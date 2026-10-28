@@ -114,9 +114,11 @@ import {
   markEagerRelaySseResponse,
 } from "../relay";
 import { preflightComboStreamResponse } from "./combo-stream-preflight";
+import { requiredToolContractOf } from "./combo-required-tool-contract";
 import { streamingContextOverflowResponse, jsonContextOverflowResponse, lateAttributionLimitResponse } from "./context-overflow";
 import { mandatoryResponsesReasoningReplayUnavailable } from "./core-replay";
-import { settleOperatorReplacement } from "../../lib/upstream-retry";
+import { isReplayRefusalResponse, settleOperatorReplacement, UPSTREAM_RESET_REPLAY_REFUSED_CODE } from "../../lib/upstream-retry";
+import { attributeFinalRequest } from "../request-log-failure-attribution";
 import { createComboProtocolLanes, dispatchNativeComboChild } from "./core-combo-native";
 import { createJevModelInvoker } from "./jev-model-invoke";
 import { comboRequestedEffortLabel } from "./combo-requested-effort";
@@ -393,6 +395,10 @@ export async function executeComboResponses(
   // result after its provisional Authorization is removed, including an explicitly keyless result.
   const replayPrincipal = options.replayPrincipal
     ?? { clientPrincipalId: resolveContextPrincipal(req, config, options.admission) };
+  // The caller's model scope, resolved once from the request options. A capability-authenticated
+  // internal request carries the caller's captured scope on options.admissionScope even though
+  // its own admission is the host's broad key; recomputing from options.admission would lose it.
+  const admissionScope = options.admissionScope ?? resolveAdmissionModelScope(config, options.admission);
   // PF-07: present only for a Chat combo with `nativeChatCombos` on; otherwise every child
   // takes the bridge below exactly as before.
   const protocolLanes = createComboProtocolLanes({
@@ -400,7 +406,7 @@ export async function executeComboResponses(
     req,
     config,
     logCtx,
-    admission: options.admission,
+    admissionScope,
     droidDefaultEffort: options.droidDefaultEffort,
     comboId,
     targets: combo.targets,
@@ -485,6 +491,18 @@ export async function executeComboResponses(
   const adoptFailedChildLog = (childLog: RequestLogContext): void => {
     // Attempts remain the complete physical history; the logical row mirrors the failed
     // target whose response is returned, including an earlier quota refusal on exhaustion.
+    // The ingress finalizer cannot stamp this child once activeAttempt is cleared below.
+    if (childLog.activeAttempt) {
+      attributeFinalRequest({
+        status: childLog.activeAttempt.status,
+        terminalSource: childLog.terminalSource,
+        transportPhase: childLog.transportPhase,
+        causeHint: childLog.causeHint,
+        outputObserved: childLog.firstOutputMs !== undefined,
+        locallyAnswered: childLog.localTerminalReason !== undefined,
+        attempt: childLog.activeAttempt,
+      });
+    }
     Object.assign(logCtx, childLog, {
       requestedModel,
       model: requestedModel,
@@ -707,7 +725,7 @@ export async function executeComboResponses(
         fallback,
         config,
         isDestinationAllowed: (providerName, modelId) => routeAllowedByScope(
-          resolveAdmissionModelScope(config, options.admission), { providerName, modelId },
+          admissionScope, { providerName, modelId },
         ),
         ...(combo.decisionQuotaSignals === true ? { decisionQuotaSignals: true, decisionQuotaTiers: combo.decisionQuotaTiers } : {}),
         ...(combo.decisionProvider ? { decisionProvider: combo.decisionProvider } : {}),
@@ -717,7 +735,7 @@ export async function executeComboResponses(
             invokeModel: createJevModelInvoker({
               req,
               config,
-              options,
+              options: { ...options, admissionScope },
               handleResponses: requestDispatchers.handleResponses,
             }),
           }
@@ -1171,7 +1189,10 @@ export async function executeComboResponses(
       const eagerRelay = isEagerRelaySseResponse(response);
       let preflight;
       try {
-        preflight = await preflightComboStreamResponse(response, childLog);
+        preflight = await preflightComboStreamResponse(response, childLog, undefined, {
+          signal: options.abortSignal,
+          requiredToolPrelude: childLog.providerAdapter === "openai-responses" && requiredToolContractOf(rawBody) !== undefined,
+        });
       } catch (error) {
         callbackGate.discard();
         if (options.abortSignal?.aborted) {
@@ -1192,6 +1213,13 @@ export async function executeComboResponses(
         if (nativePassthrough) markNativePassthroughSseResponse(response);
         if (eagerRelay) markEagerRelaySseResponse(response);
       }
+    }
+
+    if (options.abortSignal?.aborted) {
+      callbackGate.discard();
+      await response.body?.cancel().catch(() => undefined);
+      retainCancelledAttempt();
+      return clientCancelledResponse();
     }
 
     if (response.ok) {
@@ -1260,6 +1288,12 @@ export async function executeComboResponses(
       Date.now() - started,
       failure.usage,
     );
+    if (isReplayRefusalResponse(failure.response)) {
+      // Numeric 429 is a client replay policy here, not an upstream quota observation.
+      childLog.causeHint = "transport-ambiguous";
+      childLog.terminalSource = "synthetic";
+      childLog.errorCode = attempt.errorCode = UPSTREAM_RESET_REPLAY_REFUSED_CODE;
+    }
     if (failure.upstreamCode === "input_admission_refused" && attempt.sendCount === 0) {
       attempt.errorCode = failure.upstreamCode;
       localAdmissionRefusals?.push(failure.upstreamMessage ?? "");

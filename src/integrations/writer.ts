@@ -48,6 +48,8 @@ import type { IntegrationState } from "./state";
 import { serializeDocument, UnserializableValueError } from "./serialize";
 import { ClientPathError } from "../clients/config-export";
 import { hermesRefreshRefusal } from "./hermes-refresh";
+import { supportsAliasModelNames } from "../clients/config-export/model-names";
+import { staleModelNameRefusal } from "./model-name-guard";
 import { matchesOperationResult, newOpId, type JournalEntry } from "./journal";
 import { observeIntegration, restoreStoreDirectoryRefusal, type IntegrationWriteInput, type RefusalReason } from "./mutation-plan";
 import { createIntegrationStateStore, type IntegrationStateStore } from "./store";
@@ -366,7 +368,7 @@ function applyOrRefreshIntegration(
       message: "managed block is absent; refresh did not reconnect it",
     };
   }
-  if (classified.state === "current") {
+  if (classified.state === "current" && pre.modelNames === (record?.modelNames ?? "routed")) {
     return { ok: true, changed: false, state: "current", clientId, message: "already applied" };
   }
   const hermesRefusal = hermesRefreshRefusal(pre, allowAbsent);
@@ -393,54 +395,60 @@ function applyOrRefreshIntegration(
   let created: string[];
   let text: string;
   try {
-    // The source patcher updates this selected row in place. Keep it in the
-    // semantic merge too, even when we originally created it, and retain that
-    // provenance so disable can still remove the row when it becomes empty.
-    const sourceRoot = target.sourcePreservingYaml?.path[0];
-    const retainedRow = sourceRoot && parseSegment(sourceRoot).kind === "select" ? sourceRoot : null;
-    const priorCreated = record?.createdContainers ?? [];
-    const prunable = new Set(priorCreated.filter(path => path !== retainedRow));
-    const base = classified.state === "stale" && record
-      ? removeFragments(parsed, record.fragmentPaths, prunable).doc
-      : classified.state === "conflict" && record
-        /*
-         * A forced overwrite of a `foreign-edit` conflict drops what the previous
-         * record owned for the same reason a stale refresh does: the replacement
-         * record covers the paths we are about to write, so a path the old record
-         * owned and the new one does not would be stranded forever, unremovable by
-         * any later disable.
-         *
-         * With NO record -- an `unowned-key` conflict -- there is nothing to drop and
-         * the merge runs against the user's document directly. That is correct:
-         * createdContainerPaths then attributes every container they already had to
-         * them, so a later disable removes our leaves and leaves their structure
-         * standing.
-         */
-        ? removeFragments(parsed, record.fragmentPaths, prunable).doc
-        : parsed;
-    // Computed against the document as it stands BEFORE the merge: afterwards
-    // every container exists and "did we create this?" is unanswerable.
-    created = createdContainerPaths(base, contribution);
-    if (retainedRow && priorCreated.includes(retainedRow)) created = [...new Set([retainedRow, ...created])];
-    const nextDocument = mergeContribution(base, contribution);
-    if (clientId === "cline") preserveClineSelection(parsed, nextDocument);
-    if (target.sourcePreservingYaml && before !== null) {
-      const value = sourcePreservingFragmentValue(contribution, target.sourcePreservingYaml.path);
-      const patched = value === undefined
-        ? null
-        : patchYamlFragmentSource(
-            before,
-            target.sourcePreservingYaml.path,
-            { kind: "upsert", value },
-            nextDocument,
-          );
-      if (patched === null) {
-        return refuse(clientId, "unsafe", "unsafe",
-          yamlRefusalReason(before, target.sourcePreservingYaml.path, configPath, "it was left alone"));
-      }
-      text = patched;
+    if (classified.state === "current") {
+      // A policy-only transaction retains exact bytes and container provenance.
+      text = before!;
+      created = [...(record?.createdContainers ?? [])];
     } else {
-      text = clientId === "cline" ? serializeClineDocument(nextDocument) : serializeDocument(nextDocument, target.format);
+      // The source patcher updates this selected row in place. Keep it in the
+      // semantic merge too, even when we originally created it, and retain that
+      // provenance so disable can still remove the row when it becomes empty.
+      const sourceRoot = target.sourcePreservingYaml?.path[0];
+      const retainedRow = sourceRoot && parseSegment(sourceRoot).kind === "select" ? sourceRoot : null;
+      const priorCreated = record?.createdContainers ?? [];
+      const prunable = new Set(priorCreated.filter(path => path !== retainedRow));
+      const base = classified.state === "stale" && record
+        ? removeFragments(parsed, record.fragmentPaths, prunable).doc
+        : classified.state === "conflict" && record
+          /*
+           * A forced overwrite of a `foreign-edit` conflict drops what the previous
+           * record owned for the same reason a stale refresh does: the replacement
+           * record covers the paths we are about to write, so a path the old record
+           * owned and the new one does not would be stranded forever, unremovable by
+           * any later disable.
+           *
+           * With NO record -- an `unowned-key` conflict -- there is nothing to drop and
+           * the merge runs against the user's document directly. That is correct:
+           * createdContainerPaths then attributes every container they already had to
+           * them, so a later disable removes our leaves and leaves their structure
+           * standing.
+           */
+          ? removeFragments(parsed, record.fragmentPaths, prunable).doc
+          : parsed;
+      // Computed against the document as it stands BEFORE the merge: afterwards
+      // every container exists and "did we create this?" is unanswerable.
+      created = createdContainerPaths(base, contribution);
+      if (retainedRow && priorCreated.includes(retainedRow)) created = [...new Set([retainedRow, ...created])];
+      const nextDocument = mergeContribution(base, contribution);
+      if (clientId === "cline") preserveClineSelection(parsed, nextDocument);
+      if (target.sourcePreservingYaml && before !== null) {
+        const value = sourcePreservingFragmentValue(contribution, target.sourcePreservingYaml.path);
+        const patched = value === undefined
+          ? null
+          : patchYamlFragmentSource(
+              before,
+              target.sourcePreservingYaml.path,
+              { kind: "upsert", value },
+              nextDocument,
+            );
+        if (patched === null) {
+          return refuse(clientId, "unsafe", "unsafe",
+            yamlRefusalReason(before, target.sourcePreservingYaml.path, configPath, "it was left alone"));
+        }
+        text = patched;
+      } else {
+        text = clientId === "cline" ? serializeClineDocument(nextDocument) : serializeDocument(nextDocument, target.format);
+      }
     }
   } catch (error) {
     if (error instanceof AmbiguousSelectorError) {
@@ -495,6 +503,7 @@ function applyOrRefreshIntegration(
     io, store, clientId, configPath, before, nextText: text, state: "current",
     priorRecord: record,
     record: {
+      ...(supportsAliasModelNames(clientId) ? { modelNames: pre.modelNames } : {}),
       clientId, configPath, fileFingerprint: fingerprint(text),
       blockFingerprint: fingerprint(canonicalContribution(contribution)),
       semanticBlockFingerprint: fingerprint(semanticContribution(contribution)),
@@ -965,12 +974,14 @@ async function coordinatedWrite(
   input: IntegrationWriteInput,
   operation: (frozen: IntegrationWriteInput) => WriteOutcome,
   options?: CoordinatedIntegrationOptions,
+  operationKind: "apply" | "overwrite" | "disable" = "apply",
 ): Promise<WriteOutcome> {
   const prepared = tryFreezeIntegrationInput(input);
   if (!prepared.ok) return prepared.refusal;
   const frozen = prepared.value;
   const spec = INTEGRATION_CLIENTS[frozen.clientId];
-  const guarded = (bound: IntegrationWriteInput) => options?.guard?.(bound) ?? operation(bound);
+  const guarded = (bound: IntegrationWriteInput) => options?.guard?.(bound)
+    ?? staleModelNameRefusal(bound, input.config, operationKind) ?? operation(bound);
   if (!spec.writerLock) {
     const refused = await options?.revalidate?.(frozen);
     return refused ?? guarded(frozen);
@@ -1008,14 +1019,14 @@ export function overwriteIntegrationCoordinated(
   input: IntegrationWriteInput,
   options?: CoordinatedIntegrationOptions,
 ): Promise<WriteOutcome> {
-  return coordinatedWrite(input, overwriteIntegration, options);
+  return coordinatedWrite(input, overwriteIntegration, options, "overwrite");
 }
 
 export function disableIntegrationCoordinated(
   input: IntegrationWriteInput,
   options?: CoordinatedIntegrationOptions,
 ): Promise<WriteOutcome> {
-  return coordinatedWrite(input, disableIntegration, options);
+  return coordinatedWrite(input, disableIntegration, options, "disable");
 }
 
 export async function restoreIntegrationCoordinated(

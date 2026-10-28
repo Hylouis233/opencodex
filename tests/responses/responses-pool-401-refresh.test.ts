@@ -195,7 +195,7 @@ function installHarness(options: {
     const body = typeof init?.body === "string" ? init.body : "";
     const authorization = new Headers(init?.headers).get("authorization") ?? "";
     if (url.hostname === "auth.openai.com") {
-      refreshes.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+      refreshes.push((JSON.parse(String(init?.body)) as { refresh_token?: string }).refresh_token ?? "");
       if (options.refresh) return options.refresh();
       return Response.json({
         access_token: "refreshed-access",

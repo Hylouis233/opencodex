@@ -32,6 +32,7 @@ import {
   apiKeyEntrySchema,
   asideProfileSyncSchema,
   clientIntegrationsSchema,
+  opencodeClientExportSchema,
   CODEX_ACCOUNT_NAMESPACE_ACCOUNT_ID_COLLISION_ERROR,
   codexAccountNamespacesSchema,
   modelPinnedEffortsSchema,
@@ -179,6 +180,13 @@ export const configSchema = z.object({
     .min(0)
     .optional()
     .catch(undefined),
+  // Match the per-body load/degrade contract: malformed hand edits retain providers.
+  // The shared resolver clamps runtime admission to 512 MiB..2 GiB even when the
+  // caller bypasses this schema; omission and zero retain the 512 MiB default.
+  maxConcurrentInboundBodyBytes: z.number().int()
+    .min(0)
+    .optional()
+    .catch(undefined),
   appOwnedMemoryBudgetMb: z.number().int()
     .min(MIN_APP_OWNED_MEMORY_BUDGET_MB)
     .max(MAX_APP_OWNED_MEMORY_BUDGET_MB)
@@ -268,6 +276,9 @@ export const configSchema = z.object({
   // value degrades to undefined, which simply raises the notice again.
   multiAgentSurfaceAdvisoryVersion: z.number().int().nonnegative().optional().catch(undefined),
   clientIntegrations: clientIntegrationsSchema.optional().catch(undefined),
+  // Opt-in opencode-side export timeouts; a malformed block degrades to undefined so opencode
+  // keeps its native waits rather than failing the parse and hiding valid providers/accounts.
+  opencodeClientExport: opencodeClientExportSchema.optional().catch(undefined),
   // A malformed profile policy must not fall back to legacy all-profile activation.
   asideProfileSync: asideProfileSyncSchema.optional().catch({ allProfiles: false }),
   providerContextCaps: z.record(z.string(), z.number().int().positive()).optional(),

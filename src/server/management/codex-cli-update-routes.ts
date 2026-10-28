@@ -4,6 +4,7 @@ import { jsonResponse } from "../auth-cors";
 import { trackBackgroundWork } from "../../lib/background-work";
 import { readManagementJsonBody, rethrowManagementBodyTooLarge } from "./body";
 import type { ManagementContext } from "./context";
+import { hasHumanDashboardSession } from "./consent-session";
 
 const STATUS = /^\/api\/codex\/cli-update\/jobs\/([0-9a-f-]{36})$/;
 
@@ -18,13 +19,13 @@ export async function handleCodexCliUpdateRoutes(ctx: ManagementContext): Promis
   const match = STATUS.exec(ctx.url.pathname);
   if (match && ctx.req.method === "GET") {
     try {
-      const job = readCodexCliUpdateJob(match[1]!);
+      const job = await readCodexCliUpdateJob(match[1]!);
       return job ? jsonResponse(job, 200, ctx.req, ctx.config) : jsonResponse({ error: "job_not_found" }, 404, ctx.req, ctx.config);
     } catch { return jsonResponse({ error: "job_state_unavailable" }, 503, ctx.req, ctx.config); }
   }
   if (ctx.url.pathname !== "/api/codex/cli-update/apply") return null;
   if (ctx.req.method !== "POST") return jsonResponse({ error: "method_not_allowed" }, 405, ctx.req, ctx.config);
-  if (ctx.principal !== "gui-session" || !ctx.trustedLoopbackIngress) {
+  if (!hasHumanDashboardSession(ctx) || !ctx.trustedLoopbackIngress) {
     return jsonResponse({ error: "local_dashboard_confirmation_required" }, 403, ctx.req, ctx.config);
   }
   let body: unknown;
@@ -37,7 +38,7 @@ export async function handleCodexCliUpdateRoutes(ctx: ManagementContext): Promis
     return jsonResponse({ error: "invalid_request" }, 400, ctx.req, ctx.config);
   }
   try {
-    const admitted = admitCodexCliUpdateJob({ requestId: value.requestId, planId: value.planId, confirmed: true });
+    const admitted = await admitCodexCliUpdateJob({ requestId: value.requestId, planId: value.planId, confirmed: true });
     if (admitted.kind === "accepted") {
       const work = runCodexCliUpdateJob(admitted.job.jobId, admitted.generation,
         () => runCodexCliUpdateApplyInWorker(value.planId as string, { jobId: admitted.job.jobId }));

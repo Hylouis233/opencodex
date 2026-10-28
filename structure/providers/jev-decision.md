@@ -59,6 +59,8 @@ scopes the recursion rules, and a disabled, model-less or non-System-One row is 
 `GET /api/combos/decision-discovery`, read-only System One and catalog hints built by
 `src/server/management/decision-discovery.ts` (identifying candidate models including Apple Silicon `"laya"` models).
 Persisted decisions carry an optional `backend`, and the usage aggregate reports per-backend counts and latency with older rows as `unknown`.
+The bounded decision response selects SSE through the [internal media-type contract](../transports/inventory.md#internal-response-media-types), so valid header casing and parameters preserve the chosen route.
+`tests/server/server-jev-model-decision-e2e.test.ts` also verifies that other media types whose names or parameters contain the SSE token stay on the JSON path.
 
 `src/combos/jev.ts` extracts bounded user-task, previous-assistant, and latest-tool-output text plus
 the tool name and boolean signals; raw image data, tool arguments, encrypted reasoning, headers, and

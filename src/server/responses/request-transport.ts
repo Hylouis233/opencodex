@@ -77,7 +77,9 @@ import {
   resolveCurrentProviderApiKeyTransport,
 } from "../../providers/api-key-selection";
 import { resolveAdapter, resolveWireProtocolOverride } from "../adapter-resolve";
-import { codexWsExecutorBinding, physicalSendObserverInit, providerFetch, sendWithConnectionPolicy } from "./fetch-helpers";
+import { codexWsExecutorBinding, fetchWithHeaderTimeout, physicalSendObserverInit, providerFetch, sendWithConnectionPolicy } from "./fetch-helpers";
+import { resolveConnectTimeoutMs } from "../../stall-timeout";
+import { isLocalUpstream } from "../../lib/local-upstream";
 import { deepSeekImageFileBody, needsDeepSeekImageFiles } from "./deepseek-image-files";
 import type { ProviderFetchOptions } from "./fetch-helpers";
 import { captureConfigGeneration } from "../../lib/state-store-sweeper";
@@ -188,6 +190,7 @@ export async function prepareResponsesTransport(
     || route.providerName === "github-copilot"
     || route.providerName === "kiro"
     || route.providerName === "google-antigravity"
+    || route.providerName === "cursor"
     || route.providerName === "orcarouter-oauth"
     // runTurn transport: the replay runs on the first-event preflight in run-turn-execution.
     || route.providerName === "devin"
@@ -894,13 +897,15 @@ export async function prepareResponsesTransport(
             // The WS executor dials its own socket: HTTP connection policy and body coding do not apply.
             // WS eligibility (egress, pacing, URL) was checked for the provider it was built for; a
             // provider reselected above was not, so it takes the HTTP fallback under its own route.
-            response = ws?.provider === route.provider ? await execute(destination, dispatchInit) : await sendWithConnectionPolicy(
+            const physicalFetch = ((input, physicalInit) => ws?.provider === route.provider ? execute(input, physicalInit) : sendWithConnectionPolicy(
               distributedKeyPhysicalFetch(anthropicBillingPhysicalFetch(fetchImpl, route.providerName, route.provider), route.providerName, route.provider, target),
-              destination,
-              { ...dispatchInit, redirect: "manual",
+              input,
+              { ...physicalInit, redirect: "manual",
                 ...physicalSendObserverInit(observeAutoPause, destination instanceof Request ? destination.url : String(destination)) },
               { providerName: route.providerName, provider: route.provider },
-            );
+            )) as typeof globalThis.fetch;
+            response = await fetchWithHeaderTimeout(target, dispatchInit, dispatchInit.signal ?? options.abortSignal ?? req.signal,
+              resolveConnectTimeoutMs(config.connectTimeoutMs, { localUpstream: isLocalUpstream(target) }), requestParsed.stream, physicalFetch);
           } finally { releaseFamily(); }
           // Observe each physical response before retries replace it. The binding belongs to
           // this dispatch, so a manual switch cannot file A's headers against B. Header
