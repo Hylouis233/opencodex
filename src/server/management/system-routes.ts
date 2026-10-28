@@ -1,5 +1,6 @@
 import { currentUpstreamHistorySlim } from "../responses/history-slim";
 import { codexWsIncrementalStats } from "../responses/codex-ws-incremental";
+import { responseSpillCodecInfo } from "../../responses/state/spill-codec";
 /**
  * /api/system/* — service-process runtime/memory introspection (#314 WP3)
  * and the memory-card drain-and-restart action (#563).
@@ -151,6 +152,7 @@ export async function handleSystemRoutes(ctx: ManagementContext): Promise<Respon
       isDraining: isDraining(),
       upstreamHistorySlim: currentUpstreamHistorySlim(),
       codexWsIncremental: codexWsIncrementalStats(),
+      responseSpillCodec: responseSpillCodecInfo(),
     });
   }
 

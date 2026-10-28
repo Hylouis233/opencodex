@@ -15,7 +15,7 @@ The opt-in preserves an explicit HTTP provider proxy instead of dropping it on t
 path; unsupported egress and custom executors retain HTTP fallback. A per-request ID
 travels in message metadata instead of fragmenting socket identity. Socket/account,
 credential, thread, proxy and rewritten-destination boundaries remain authoritative.
-Idle retention is at most three minutes, total age twenty minutes and exchanges 256;
+Idle retention is at most ten minutes, total age fifty minutes and exchanges 256;
 comparison state is capped at 64 MiB per context and 128 MiB across contexts. Disabling
 the feature clears comparison state. A cold oversized create uses existing HTTP/SSE;
 the WS frame limit applies to the actual delta frame, not its omitted full reference.
@@ -24,6 +24,9 @@ the WS frame limit applies to the actual delta frame, not its omitted full refer
 They compare WS JSON frames with full JSON, not compressed HTTP or interface billing.
 `tests/responses/codex-ws-incremental.test.ts` covers prefix changes, identity separation,
 unknown completion, ciphertext changes, references and image-policy composition.
+`tests/responses/codex-ws-pool-contention.test.ts` checks continuation across the old
+idle/age deadlines and expiry at the bounded replacement deadlines. These are retention
+limits, not upstream availability guarantees; peer closure still drops all socket state.
 
 ## Historical image and tool context
 

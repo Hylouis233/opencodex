@@ -1,6 +1,8 @@
 // Send only new input on acknowledged, account-bound native Codex WebSocket continuations.
 // No retry or upstream-response storage policy is changed by this module.
 let enabled = false;
+export const CODEX_WS_INCREMENTAL_IDLE_MS = 600_000;
+export const CODEX_WS_INCREMENTAL_MAX_AGE_MS = 3_000_000;
 export function setCodexWsIncrementalUpload(value: boolean): void {
   enabled = value;
   if (!value) { states.clear(); retained = 0; }
@@ -108,5 +110,6 @@ export function forgetIncrementalSession(session: object): void {
 }
 export function codexWsIncrementalStats() {
   return { enabled, ...counters, retainedBytes: retained, retainedSessions: states.size,
+    idleRetentionMs: CODEX_WS_INCREMENTAL_IDLE_MS, maxSessionAgeMs: CODEX_WS_INCREMENTAL_MAX_AGE_MS,
     savedFrameBytes: counters.fullFrameBytes - counters.sentFrameBytes };
 }

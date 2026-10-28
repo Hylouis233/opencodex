@@ -1,4 +1,4 @@
-import { codexWsIncrementalUploadEnabled } from "./codex-ws-incremental";
+import { codexWsIncrementalUploadEnabled, CODEX_WS_INCREMENTAL_IDLE_MS, CODEX_WS_INCREMENTAL_MAX_AGE_MS } from "./codex-ws-incremental";
 import { createHmac, randomBytes } from "node:crypto";
 import { codexWsReuseAcrossTurnsEnabled } from "../../config/codex-ws-reuse-setting";
 import { registerOptionalShutdownHook } from "../../lib/optional-shutdown-hooks";
@@ -218,8 +218,8 @@ export class CodexWsPool {
     this.arm();
   }
 
-  private idleLimit(): number { return !this.customIdle && codexWsIncrementalUploadEnabled() ? 180_000 : this.idleMs; }
-  private ageLimit(): number { return !this.customAge && codexWsIncrementalUploadEnabled() ? 1_200_000 : this.maxAgeMs; }
+  private idleLimit(): number { return !this.customIdle && codexWsIncrementalUploadEnabled() ? CODEX_WS_INCREMENTAL_IDLE_MS : this.idleMs; }
+  private ageLimit(): number { return !this.customAge && codexWsIncrementalUploadEnabled() ? CODEX_WS_INCREMENTAL_MAX_AGE_MS : this.maxAgeMs; }
 
   private arm(): void {
     clearTimeout(this.timer);

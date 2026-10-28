@@ -1153,6 +1153,7 @@
   "responses-spend-capacity-guard.test.ts": "responses", "responses-spill-acl-recovery.test.ts": "responses",
   "responses-spill-admission-headroom.test.ts": "responses",
   "responses-spill-inspection.test.ts": "responses", "responses-spill-orphan-sweep.test.ts": "responses",
+  "responses-spill-compression.test.ts": "responses",
   "responses-spill-shutdown-clock.test.ts": "responses", "responses-state-snapshot-select.test.ts": "responses",
   "responses-state-snapshot-stubs.test.ts": "responses", "responses-state-store-false.test.ts": "responses", "responses-state-write-amplification.test.ts": "responses",
   "responses-state-flush-race.test.ts": "responses",
