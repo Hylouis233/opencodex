@@ -36,13 +36,6 @@ export function bindUpstreamHistorySlimConfig(config: Pick<OcxConfig, "upstreamH
   boundConfig = config;
 }
 
-export function upstreamHistorySlimConfigError(value: unknown): string | null {
-  if (!isPlainObject(value) || !Object.hasOwn(value, "upstreamHistorySlim")) return null;
-  const mode = value.upstreamHistorySlim;
-  return mode === undefined || mode === "off" || mode === "codex" ? null
-    : 'schema_invalid: upstreamHistorySlim: must be "off" or "codex"';
-}
-
 export function resolveUpstreamHistorySlim(value: unknown): UpstreamHistorySlim {
   return value === "codex" ? "codex" : "off";
 }
@@ -75,14 +68,6 @@ function imageStub(bytes: number): Record<string, unknown> {
     type: "input_text",
     text: `[image omitted, ${bytes} bytes, original remains in the local session]`,
   };
-}
-
-function shortenText(text: string): string {
-  const size = Buffer.byteLength(text);
-  if (size <= TEXT_LIMIT) return text;
-  const head = utf8(text, 0, TEXT_HEAD);
-  const tail = utf8(text, Math.max(0, size - TEXT_TAIL), size);
-  return `[tool output shortened, original ${size} bytes, full output remains in the local session]\n${head}\n[${size} bytes omitted]\n${tail}`;
 }
 
 /** Replace inline images. Returns whether any part changed. */
@@ -134,22 +119,33 @@ function collectTextSlots(value: unknown, slots: TextSlot[]): void {
   }
 }
 
+function excerptText(text: string, size: number): string {
+  const head = utf8(text, 0, TEXT_HEAD);
+  const tail = utf8(text, Math.max(0, size - TEXT_TAIL), size);
+  return `[tool output shortened, original ${size} bytes, full output remains in the local session]\n${head}\n[${size} bytes omitted]\n${tail}`;
+}
+
+/**
+ * Budget against the whole serialized tool output, not one field: an output split into many
+ * text parts below 32 KiB each still has its largest parts excerpted until the item fits.
+ */
 function trimToolOutput(item: Record<string, unknown>): boolean {
   if (typeof item.type !== "string" || !TOOL_OUTPUT_TYPES.has(item.type)) return false;
+  let total = Buffer.byteLength(JSON.stringify(item));
+  if (total <= TEXT_LIMIT) return false;
+  const slots: TextSlot[] = [];
+  collectTextSlots(item, slots);
+  slots.sort((a, b) => b.bytes - a.bytes);
   let changed = false;
-  for (let pass = 0; pass < 64; pass += 1) {
-    if (Buffer.byteLength(JSON.stringify(item)) <= TEXT_LIMIT) return changed;
-    const slots: TextSlot[] = [];
-    collectTextSlots(item, slots);
-    slots.sort((a, b) => b.bytes - a.bytes);
-    const slot = slots.find(candidate => candidate.bytes > TEXT_HEAD + TEXT_TAIL);
-    if (!slot) return changed;
+  for (const slot of slots) {
+    if (total <= TEXT_LIMIT) break;
     const current = slot.parent[slot.key];
-    if (typeof current !== "string") return changed;
-    const next = shortenText(current);
-    if (next === current) return changed;
+    if (typeof current !== "string") continue;
+    const next = excerptText(current, slot.bytes);
+    const saved = Buffer.byteLength(JSON.stringify(current)) - Buffer.byteLength(JSON.stringify(next));
+    if (saved <= 0) continue;
     slot.parent[slot.key] = next;
-    slot.bytes = Buffer.byteLength(next);
+    total -= saved;
     changed = true;
   }
   return changed;

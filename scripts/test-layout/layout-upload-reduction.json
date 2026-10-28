@@ -1,4 +1,5 @@
 {
   "codex-ws-incremental.test.ts": "responses",
-  "upstream-history-slim.test.ts": "responses"
+  "upstream-history-slim.test.ts": "responses",
+  "codex-ws-live-bind.test.ts": "config"
 }

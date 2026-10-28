@@ -2,8 +2,10 @@
 
 ## Incremental WebSocket continuation
 
-`src/server/responses/codex-ws-incremental.ts` owns the default-off
-`codexWsIncrementalUpload` switch and bounded, socket-local completed-prefix state.
+`src/server/responses/codex-ws-incremental.ts` owns bounded, socket-local completed-prefix
+state behind the default-off `codexWsIncrementalUpload` switch. The process flag lives in
+`src/config/codex-ws-incremental-setting.ts`, so config loading never reaches the Responses
+transport from a Child or Hub client; the transport subscribes to clear its state on disable.
 It implies cross-turn reuse. Ordinary canonical ChatGPT creates can send only newly
 appended input and the acknowledged response ID when the envelope and full prefix match.
 Provider-issued item IDs/status and empty reasoning content are normalized only for
@@ -19,6 +21,12 @@ Idle retention is at most ten minutes, total age fifty minutes and exchanges 256
 comparison state is capped at 64 MiB per context and 128 MiB across contexts. Disabling
 the feature clears comparison state. A cold oversized create uses existing HTTP/SSE;
 the WS frame limit applies to the actual delta frame, not its omitted full reference.
+Integration points: `src/server/responses/ws-upstream.ts` builds delta frames and owns the
+oversized-create fallback; `src/server/responses/codex-ws-request.ts` carries the request ID;
+`src/server/responses/codex-ws-exchange.ts` records dispatch and seeds completed prefixes;
+`src/server/responses/codex-ws-session.ts` and `src/server/responses/codex-ws-pool.ts` hold
+socket lifetime and retention limits;
+`src/server/responses/fetch-helpers.ts` keeps the explicit-proxy WS path and history slimming.
 
 `src/server/management/system-routes.ts` exposes content-free send/reference byte counters.
 They compare WS JSON frames with full JSON, not compressed HTTP or interface billing.
@@ -44,8 +52,10 @@ Socket continuation follows the [incremental contract](#incremental-websocket-co
 
 `src/config/schema/config-schema.ts` declares the optional `upstreamHistorySlim` enum, which defaults to `off`; `codex` selects the explicitly
 lossy outbound history policy described in [Responses transport](responses.md#responses-httpsse).
-Invalid disk values disable the option; candidate writes reject them. The live state-store
+Invalid disk values disable the option; `src/config/diagnostics.ts` rejects them on candidate writes. The live state-store
 registration in `src/lib/state-store-registrations.ts` binds the policy without editing retained conversation data.
-`codexWsIncrementalUpload` is a default-off boolean and implies socket reuse after reload;
+`codexWsIncrementalUpload` and `codexWsReuseAcrossTurns` are default-off booleans bound only from that
+same live registration (install and reconcile), never from a detached `loadConfig()` read such as `/api/sync`;
+incremental upload implies socket reuse;
 the [incremental transport contract](#incremental-websocket-continuation)
 owns completed-state, retention limits, counters and fallback behavior.

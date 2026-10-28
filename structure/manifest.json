@@ -55,6 +55,12 @@
       "documents": [
         "src/server/responses/history-slim.ts",
         "src/server/responses/codex-ws-incremental.ts",
+        "src/server/responses/ws-upstream.ts",
+        "src/server/responses/codex-ws-exchange.ts",
+        "src/server/responses/codex-ws-pool.ts",
+        "src/server/responses/codex-ws-session.ts",
+        "src/server/responses/codex-ws-request.ts",
+        "src/server/responses/fetch-helpers.ts",
         "src/config/",
         "src/lib/state-store-registrations.ts",
         "src/server/management/system-routes.ts"
@@ -192,11 +198,26 @@
     {
       "path": "codex-cli-update.md",
       "tier": 2,
-      "title": "Codex CLI Update Plan",
-      "scope": "Read-only update planning, isolated npm environment, and complete process observation.",
+      "title": "Codex CLI Update",
+      "scope": "Content-bound planning and explicit POSIX apply with isolated npm, artifact validation, installation leases and readback.",
       "documents": [
         "src/codex/cli-update-plan.ts",
-        "src/codex/app-server-processes.ts"
+        "src/codex/cli-update-apply.ts",
+        "src/codex/cli-update-job.ts",
+        "src/codex/cli-update-job-execution.ts",
+        "src/codex/cli-update-job-worker.ts",
+        "src/codex/cli-update-selection-gate.ts",
+        "src/codex/cli-update-recovery.ts",
+        "src/codex/cli-update-worker-recovery.ts",
+        "src/codex/cli-update-worker.ts",
+        "src/server/management/codex-cli-update-routes.ts",
+        "src/codex/cli-update-inspection-context.ts",
+        "bin/ocx.mjs",
+        "src/codex/cli-update-artifacts.ts",
+        "src/codex/cli-update-files.ts",
+        "src/codex/cli-update-lease.ts",
+        "src/codex/app-server-processes.ts",
+        "src/cli/codex-cli-update.ts"
       ]
     },
     {
@@ -294,6 +315,22 @@
         "src/adapters/anthropic-replay.ts",
         "src/adapters/anthropic-tool-catalog.ts",
         "src/responses/reasoning-replay-cache.ts"
+      ]
+    },
+    {
+      "path": "transports/response-turn-membership.md",
+      "tier": 3,
+      "title": "Structural Response Turn Membership",
+      "scope": "Embedding-owned signing material, dedicated authenticated caller/own-thread scope and pre-parser structural normalization.",
+      "documents": [
+        "src/responses/turn-membership.ts",
+        "src/server/responses/turn-membership.ts",
+        "src/bridge/sse.ts",
+        "src/server/responses/adapter-delivery.ts",
+        "src/server/responses/adapter-dispatch.ts",
+        "src/server/responses/request-transport.ts",
+        "src/server/auth-cors.ts",
+        "src/server/responses/request-prepare.ts"
       ]
     },
     {
@@ -434,6 +471,13 @@
         "src/chat/",
         "src/server/"
       ]
+    },
+    {
+      "path": "data-planes/claude-tool-loading.md",
+      "tier": 3,
+      "title": "Append-only Claude Tool Loading",
+      "scope": "Physical-adapter tool-loading projection, preserved catalogs, fallback exclusions and opt-in prerequisites.",
+      "documents": ["src/claude/", "src/server/responses/"]
     },
     {
       "path": "data-planes/chat-reasoning-details.md",
@@ -686,6 +730,13 @@
       ]
     },
     {
+      "path": "providers/completed-tool-blocks.md",
+      "tier": 4,
+      "title": "Negotiated Completed Tool Blocks",
+      "scope": "Explicit response-only block completion, ordered safe-call delivery and terminal ownership.",
+      "documents": ["src/adapters/base.ts", "src/adapters/unique-tool-call-ids.ts", "src/adapters/openai-chat.ts", "src/adapters/openai-chat/completed-tool-blocks.ts", "src/adapters/openai-chat/serialized-tool-call-content.ts"]
+    },
+    {
       "path": "providers/mimo-bare-calls.md",
       "tier": 4,
       "title": "MiMo Bare Tool Calls",
@@ -906,6 +957,22 @@
       "documents": [
         "desktop/",
         "src/server/management/companion-routes.ts"
+      ]
+    },
+    {
+      "path": "desktop-recovery.md",
+      "tier": 6,
+      "title": "Desktop recovery evidence",
+      "scope": "Native recovery intent, independently anchored executable and accepted-connection proof, cold-start decisions and installation scope.",
+      "documents": [
+        "desktop/src-tauri/src/recovery.rs",
+        "desktop/src-tauri/src/recovery_activity.rs",
+        "desktop/src-tauri/src/recovery_presence.rs",
+        "desktop/src-tauri/src/startup.rs",
+        "desktop/src-tauri/src/supervisor.rs",
+        "src/service/desktop-recovery.ts",
+        "src/service/desktop-recovery-process.ts",
+        "src/cli/ensure-desktop-cold-start.ts"
       ]
     },
     {

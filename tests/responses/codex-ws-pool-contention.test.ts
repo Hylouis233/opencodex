@@ -45,8 +45,8 @@ function frame(turn: string, model = "fixture-model"): string {
   });
 }
 
-function identity(turn: string, model = "fixture-model", authorization = headers.authorization) {
-  return codexWsReuseIdentity(CODEX_RESPONSES_HTTP_URL, { ...headers, authorization }, frame(turn, model));
+function identity(turn: string, model = "fixture-model", authorization = headers.authorization, caller?: string) {
+  return codexWsReuseIdentity(CODEX_RESPONSES_HTTP_URL, { ...headers, authorization }, frame(turn, model), undefined, undefined, caller);
 }
 
 const pools: CodexWsPool[] = [];
@@ -70,12 +70,12 @@ for (const scenario of [{ name: "four idle minutes", releaseAt: 0, nextAt: 240_0
     let now = 0;
     const retained = new CodexWsPool({ now: () => now });
     pools.push(retained);
-    const key = identity("turn-a")!;
+    const key = identity("turn-a", "fixture-model", headers.authorization, "fixture-caller")!;
     const first = retained.acquire(key, CODEX_RESPONSES_HTTP_URL, headers)!;
     await opened();
     const input = [{ role: "user", content: "context ".repeat(32_768) }];
     const body = { type: "response.create", model: "fixture-model", input, store: false };
-    const plan = prepareIncrementalFrame(first, JSON.stringify(body))!;
+    const plan = prepareIncrementalFrame(first, JSON.stringify(body), "fixture-caller")!;
     const output = [{ type: "message", role: "assistant", content: "acknowledged" }];
     completeIncrementalFrame(plan, { id: "resp-retained", status: "completed", output });
     now = scenario.releaseAt;
@@ -84,7 +84,7 @@ for (const scenario of [{ name: "four idle minutes", releaseAt: 0, nextAt: 240_0
     const next = retained.acquire(key, CODEX_RESPONSES_HTTP_URL, headers)!;
     expect(next).toBe(first);
     const full = JSON.stringify({ ...body, input: [...input, ...output, { role: "user", content: "next" }] });
-    const delta = prepareIncrementalFrame(next, full)!;
+    const delta = prepareIncrementalFrame(next, full, "fixture-caller")!;
     expect(delta.delta).toBe(true);
     expect(delta.sentBytes).toBeLessThan(delta.fullBytes / 100);
     expect(JSON.parse(delta.frameText).input).toEqual([{ role: "user", content: "next" }]);
@@ -99,7 +99,7 @@ test("incremental sockets still expire after ten idle minutes or fifty minutes o
     let now = 0;
     const retained = new CodexWsPool({ now: () => now });
     pools.push(retained);
-    const key = identity("turn-a")!;
+    const key = identity("turn-a", "fixture-model", headers.authorization, "fixture-caller")!;
     const first = retained.acquire(key, CODEX_RESPONSES_HTTP_URL, headers)!;
     await opened();
     now = timing.releaseAt;
@@ -137,7 +137,7 @@ test("real loopback exchanges send fewer bytes after an idle gap without extra c
     const retained = new CodexWsPool({ now: () => now,
       ...(oldDeadlines ? { idleMs: 180_000, maxAgeMs: 1_200_000 } : {}) });
     const input: unknown[] = [{ role: "user", content: "retained context ".repeat(16_384) }];
-    const key = identity("turn-a")!;
+    const key = identity("turn-a", "fixture-model", headers.authorization, "fixture-caller")!;
     try {
       for (let turn = 0; turn < 2; turn++) {
         if (turn) { now = 240_000; input.push(...output, { role: "user", content: "next" }); }
@@ -145,7 +145,7 @@ test("real loopback exchanges send fewer bytes after an idle gap without extra c
           body: JSON.stringify({ model: "fixture-model", stream: true, input, store: false }) };
         const prepared = prepareCodexWsRequest(CODEX_RESPONSES_HTTP_URL, init)!;
         const session = retained.acquire(key, `ws://127.0.0.1:${server.port}`, prepared.headers)!;
-        const plan = prepareIncrementalFrame(session, prepared.frameText)!;
+        const plan = prepareIncrementalFrame(session, prepared.frameText, "fixture-caller")!;
         const response = await codexWsExchange({ session, url: CODEX_RESPONSES_HTTP_URL, init,
           prepared: { ...prepared, frameText: plan.frameText }, incrementalPlan: plan,
           sseFallback: (() => { throw new Error("unexpected HTTP fallback"); }) as typeof fetch,
@@ -247,6 +247,33 @@ test("the wait queue is FIFO, depth limited, and abortable", async () => {
   first!.release("response-1");
   expect(await queued[0]).toBe(first);
   expect(Socket.all).toHaveLength(1);
+});
+
+test("the admitted caller scopes pooled sockets, including queued acquisition", async () => {
+  setCodexWsReuseAcrossTurns(true);
+  const retained = pool();
+  const alice = identity("turn-a", "fixture-model", headers.authorization, "principal:alice")!;
+  const bob = identity("turn-b", "fixture-model", headers.authorization, "principal:bob")!;
+  const unidentified = identity("turn-c")!;
+  expect(identity("turn-z", "fixture-model", headers.authorization, "principal:alice")!.key).toBe(alice.key);
+  expect(new Set([alice.scope, bob.scope, unidentified.scope]).size).toBe(3);
+  expect(new Set([alice.key, bob.key, unidentified.key]).size).toBe(3);
+  const held = retained.acquire(alice, CODEX_RESPONSES_HTTP_URL, headers);
+  await opened();
+  // Another caller on the same credential, account and thread never queues for, or receives,
+  // the first caller's socket; it gets its own connection at once.
+  const other = await retained.acquireWaiting(bob, CODEX_RESPONSES_HTTP_URL, headers, undefined);
+  expect(other).not.toBeNull();
+  expect(other).not.toBe(held);
+  const anonymous = await retained.acquireWaiting(unidentified, CODEX_RESPONSES_HTTP_URL, headers, undefined);
+  expect(anonymous).not.toBeNull();
+  expect(anonymous).not.toBe(held);
+  expect(anonymous).not.toBe(other);
+  const same = retained.acquireWaiting(alice, CODEX_RESPONSES_HTTP_URL, headers, undefined);
+  held!.release("response-1");
+  expect(await same).toBe(held);
+  expect(Socket.all).toHaveLength(3);
+  expect(retained.snapshot().size).toBe(3);
 });
 
 test("reuse drops turn headers from the handshake", () => {
