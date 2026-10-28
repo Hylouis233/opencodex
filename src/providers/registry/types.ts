@@ -63,6 +63,8 @@ export interface ProviderModelDiscoveryFilter {
 }
 
 interface ProviderModelDiscoverySharedSpec {
+  /** Product-config envelope used by WorkBuddy AI instead of an OpenAI model list. */
+  format?: "workbuddy";
   /** Query parameters applied to the resolved discovery URL. */
   query?: Readonly<Record<string, string>>;
   /** Top-level response key containing model rows; defaults to `data`. */
@@ -316,6 +318,15 @@ export interface ProviderRegistryEntry {
    */
   modelDisplayNames?: Record<string, string>;
   modelInputModalities?: Record<string, string[]>;
+  /**
+   * Provider-wide input modalities for every model `modelInputModalities` does not enumerate,
+   * including ids that arrive from live discovery. Declare it where the limit belongs to the
+   * provider's API rather than to one model; a per-model entry still wins over it. Registry-only
+   * and runtime-only: never seeded or enriched into saved config, and applied only while a provider
+   * points at this entry's destination (routed provider, vision eligibility).
+   */
+  inputModalities?: string[];
+  modelCapabilities?: OcxProviderConfig["modelCapabilities"];
   defaultMaxOutputTokens?: number;
   modelMaxOutputTokens?: Record<string, number>;
   reasoningEfforts?: string[];
@@ -356,6 +367,12 @@ export interface ProviderRegistryEntry {
   chatServiceTier?: boolean;
   /** OpenAI Chat EOF policy for gateways that omit terminal frames after complete tool calls. */
   openaiChatEofTolerance?: boolean;
+  /**
+   * Record that this destination rejects the Chat `developer` role (`400 role 'developer' is not
+   * allowed`), so both the translated route and the native `/v1/chat/completions` passthrough send
+   * `system` instead. Seeds `foldDeveloperRoleToSystem` on the provider config; a user value wins.
+   */
+  foldDeveloperRoleToSystem?: boolean;
   autoToolChoiceOnlyModels?: string[];
   preserveReasoningContentModels?: string[];
   requiresReasoningPlaceholderModels?: string[];
@@ -388,10 +405,10 @@ export type ProviderConfigSeed = Pick<
   "anthropicOAuthInstance" |
   "adapter" | "baseUrl" | "apiKeyTransport" | "responsesPath" | "chatCompletionsPath" | "authMode" | "keyOptional" | "freeTier" | "modelSuffixBracketStrip" | "defaultModel" | "models"
   | "liveModels" | "contextWindow" | "modelContextWindows" | "modelInputModalities"
-  | "modelDisplayNames"
+  | "modelDisplayNames" | "modelCapabilities"
   | "modelMaxInputTokens" | "defaultMaxOutputTokens" | "modelMaxOutputTokens"
   | "reasoningEfforts" | "modelReasoningEfforts" | "modelDefaultReasoningEfforts" | "reasoningEffortMap" | "modelReasoningEffortMap" | "reasoningWireFormat"
   | "noVisionModels" | "noReasoningModels" | "noTemperatureModels" | "noTopPModels" | "noStopModels" | "noPenaltyModels"
-  | "autoToolChoiceOnlyModels" | "preserveReasoningContentModels" | "requiresReasoningPlaceholderModels" | "reasoningSplitModels" | "inlineThinkTagModels" | "reasoningDetailsModels" | "thinkingToggleModels" | "thinkingBudgetModels" | "escapeBuiltinToolNames" | "openaiChatEofTolerance" | "showThinkingSummary"
+  | "autoToolChoiceOnlyModels" | "preserveReasoningContentModels" | "requiresReasoningPlaceholderModels" | "reasoningSplitModels" | "inlineThinkTagModels" | "reasoningDetailsModels" | "thinkingToggleModels" | "thinkingBudgetModels" | "escapeBuiltinToolNames" | "openaiChatEofTolerance" | "foldDeveloperRoleToSystem" | "showThinkingSummary"
   | "googleMode" | "project" | "location" | "headers"
 >;

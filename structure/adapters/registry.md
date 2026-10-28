@@ -1,5 +1,6 @@
 # Adapter Registry Authority
 
+`workbuddy-ai` inherits the `openai-chat` contract with a fixed-origin subscription adapter; see [WorkBuddy AI](../providers/workbuddy.md).
 Native result continuations and function-result injection follow [the mode-specific result and control contract](../transports/streaming-health.md#experimental-native-function-result-injection); this surface does not infer upstream support or alter its defaults.
 
 Native steering follows [the shared WebSocket contract](../transports/streaming-health.md#experimental-native-mid-turn-steering); this surface's defaults remain unchanged.
@@ -335,3 +336,7 @@ This is linear accumulation, not a global request-memory or execution-time bound
 `tests/providers/devin-chat-wire-fixes.test.ts` covers these boundaries and protobuf fields #7,
 #9 and #10. This normalization addresses duplicate consecutive tool prompts, not every
 upstream `invalid_argument`.
+
+`src/adapters/unique-tool-call-ids.ts` forwards optional per-exchange stream context while
+retaining tool-call ID reminting; [completed tool blocks](../providers/completed-tool-blocks.md)
+require that context independently of request construction.

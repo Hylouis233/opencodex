@@ -49,7 +49,8 @@ and is cached for five seconds. Loopback and unkeyed requests have no device sco
 | Subagent model fallback, `src/codex/subagent-model-fallback.ts` | `applySubagentModelFallback`, before the spawn's model is rewritten; the caller in `src/server/responses/request-prepare.ts` returns the refusal | — | `unavailable`, 503 |
 | Main-account hard-lock fallback, `src/server/responses/main-hard-lock-routing.ts` | before the body is rewritten; `FallbackRefusedError` carries the refusal to `request-prepare.ts` | — | `hard_lock`, 429 |
 
-A refused hop never contacts the fallback target and leaves the request body untouched.
+A refused hop never contacts its refused destination. Hard-lock pre-admission refuses before
+rewriting the body; its first combo dispatch or profile selection can refuse after that rewrite.
 
 The combo and routing-profile sites classify a hop by resolved destinations: both ends pass through
 `routeConcreteModel`, so provider aliases and `blockedModelRedirects` are applied, and the end a hop
@@ -57,11 +58,27 @@ leaves is the failed child's resolved provider and model. Two selectors under on
 to different providers make a provider hop; a routing profile's `current` advances to the redirected
 candidate.
 
-The hard-lock site classifies its one proactive hop from config alone, before anything is sent: a
-combo, account namespace or concrete target through `previewRouteModel`, and a routing profile from
-its declared candidates (any candidate on another provider makes a provider hop) without running the
-evaluator, which would open `routing-history.sqlite` under `OPENCODEX_HOME`. The profile's own
-dispatch still evaluates it.
+The hard-lock site keeps concrete/account-qualified targets' proactive admission at body rewrite.
+For combos and profiles it only checks policy feasibility over declared destinations, resolved through
+`routeConcreteModel` with the actual first guard's route, alias, source-provider and device precedence.
+It refuses before rewriting only when every declared candidate resolves and is policy-denied. One
+denied candidate is the refusal witness; it is not a selected destination. Empty, mixed or unresolved
+declarations defer to actual dispatch. No candidate is filtered, no random sample is consumed, and no
+picker state or profile-history index is opened. Cooldown, weighted/RR/sticky order and evidence-based
+profile ranking remain the selector's responsibility. This preflight creates no taken event or send
+reservation: an all-denied declaration records one refusal, otherwise it records nothing.
+
+A hard-lock rewrite checks the actual first combo destination in `core-combo.ts` against the locked
+OpenAI source, with `trigger: hard_lock`. Feasibility is no grant: a forbidden selected destination
+still refuses even when another declaration is allowed or unknown. Actual unknown resolution remains
+fail-closed. The combo records an allowed first hop only after its send-budget reservation.
+
+For a hard-lock profile rewrite, `src/server/responses/request-prepare.ts` checks the actual first
+ranked destination against the original OpenAI model with `trigger: hard_lock`. An allowed declared
+provider hop does not admit a selected model hop when model fallback is off. The guard records an allowed
+selection when it is accepted; later authentication or preparation can still refuse it.
+`tests/codex-integration/main-account-hard-lock-profile-dispatch.test.ts` covers refusal and allowed
+dispatch with a synthetic caller-owned credential and a fetch stub.
 
 ## Refusal contract
 
@@ -88,9 +105,10 @@ opt-in per device"); OpenCodex never acts on it and keeps answering `home_unreac
 ## State and surfaces
 
 Every guarded hop, taken or refused, is recorded in a 20-entry in-memory ring (`recentFallbackEvents`).
-A refusal is recorded when it is decided; an allowed hop only when its site calls `commit()` after the
-dispatch is admitted (the combo send-budget reservation passed, a profile candidate was not locally
-skipped), so the ring never names a target that was not contacted. Each event carries
+A refusal is recorded when it is decided; an allowed hop only when its site calls `commit()` at its
+admission boundary (body rewrite, combo send-budget reservation, or accepted profile selection).
+`taken` records that guard admission, not an upstream contact or a billed send; later preparation,
+authentication or dispatch may still refuse. Each event carries
 time, site, route, kind, from, to, trigger, outcome, deciding scope and the device id. No body, key,
 account id, label or email. `src/routing/fallback-state.ts` builds the `ocx.fallback/1` view and applies
 the one scoped write.
@@ -111,3 +129,5 @@ privacy), `tests/responses/responses-combo-fallback-off.test.ts`, `tests/routing
 `tests/routing/subagent-model-fallback-off.test.ts`, `tests/codex-integration/main-account-hard-lock-fallback-off.test.ts`,
 `tests/server/fallback-routes.test.ts`, `tests/clients/client-home-unreachable.test.ts`, `tests/cli/cli-fallback.test.ts`
 and `gui/tests/fallback-panel.test.tsx`.
+
+The opt-in [all-cooled Combo recovery](runtime.md#scoped-provider-quota-for-combo-selection) can reserve saved combo cooldowns in `src/combos/resolve.ts`; only that request bypasses its reserved writes until a successful dispatch conditionally clears its unchanged target, with throwing predicates treated as ineligible during recovery preparation and available siblings preferred without probing cooled targets. Route-level picks and in-flight retry-after-cooldown selections disable reprobes. Recovery does not authorize a fallback hop or bypass the configured fallback policy.

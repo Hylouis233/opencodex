@@ -1,3 +1,4 @@
+import { flushLinkDiagnostics, recordLinkDiagnostic } from "../link/diagnostics";
 import { existsSync } from "node:fs";
 import type { Server } from "bun";
 import { siblingRuntimeField, withSiblingMarker } from "../codex/sibling-start";
@@ -5,6 +6,8 @@ import { issueSiblingHandoff } from "../codex/sibling-handoff";
 import { loadConfig } from "../config";
 import { removePid, removeRuntimePort, writePid, writeRuntimePort, type RuntimePortState } from "../config/process-state";
 import { installCrashGuards } from "../lib/crash-guard";
+import { observeLocalCredentials } from "../local-credentials/runtime-observation";
+import { verifiedHomeConnection } from "./link-connection";
 import { createLocalAttestationSecret } from "../lib/local-management-attestation";
 import { loadServiceTokenFromFile, serviceApiTokenFingerprint } from "../lib/service-secrets";
 import { handledSignalExitCode } from "../lib/handled-signal-exit";
@@ -20,6 +23,7 @@ import type { ReplacementStartRequest } from "../server/restart-replacement";
 import type { OcxClientConnectionConfig } from "../types";
 import { createLinkKeySource } from "./link-ingress";
 import { HOME_INITIATED_LINK_TUNNEL } from "./link-relay";
+import { clientInitiatedLinkReadiness, createHomeInitiatedLinkReadiness } from "./link-readiness";
 import { createClientLinkSupervisor, type ClientLinkSupervisor } from "./link-tunnel";
 import { clientLinkStatePath, isChildInitiatedLink, recordChildInitiatedLink } from "./link-state";
 import { startMachineListener, type MachineListenerDeps } from "./machine-listener";
@@ -164,6 +168,7 @@ export async function recycleStandalone(
     console.warn(`[client] listener stop failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   cleanup();
+  await flushLinkDiagnostics();
   // Recycling back to standalone after `ocx disconnect` must actually bring a standalone
   // proxy back, under every launch shape.
   //
@@ -227,7 +232,7 @@ export async function bindClientListener(
     preferred: number;
     explicitPort: boolean;
     configuredPort: number;
-  } & Pick<MachineListenerDeps, "linkStatus" | "linkKeySource" | "linkTunnel" | "restart">,
+  } & Pick<MachineListenerDeps, "linkStatus" | "linkKeySource" | "linkTunnel" | "linkReadiness" | "linkConnectionGeneration" | "restart">,
   io: ClientRuntimeIo = {},
 ): Promise<{ server: Server<unknown>; port: number }> {
   const { linkMode } = request;
@@ -267,6 +272,8 @@ export async function bindClientListener(
         ...(request.linkStatus ? { linkStatus: request.linkStatus } : {}),
         ...(request.linkKeySource ? { linkKeySource: request.linkKeySource } : {}),
         ...(request.linkTunnel ? { linkTunnel: request.linkTunnel } : {}),
+        ...(request.linkReadiness ? { linkReadiness: request.linkReadiness } : {}),
+        ...(request.linkConnectionGeneration ? { linkConnectionGeneration: request.linkConnectionGeneration } : {}),
         ...(request.restart ? { restart: request.restart } : {}),
       });
       return { server, port: server.port ?? port };
@@ -308,6 +315,8 @@ export async function startClientRuntime(
     && !isChildInitiatedLink(state.value.link.linkId);
   // One secret for the life of this process: a rollback republishes the same identity.
   const attestationSecret = createLocalAttestationSecret();
+  // The local-credential observer lives exactly while this process serves (status attestation).
+  let credentialObservation: { stop(): void } | null = null;
 
   // Bind, start a fresh tunnel supervisor and publish. Runs once at start and again when a failed
   // restart rolls back (OCX-6); the stopped supervisor cannot be started twice, so each call builds one.
@@ -318,10 +327,19 @@ export async function startClientRuntime(
   const serve = async (rollback?: { port: number; portWaitMs: number }): Promise<boolean> => {
     const supervisor = supervised
       ? createClientLinkSupervisor({
+        diagnostic: recordLinkDiagnostic,
         onLinkEnded: () => scheduleStandaloneRecycle(state.value.tokenFingerprint),
         linkKey,
       })
       : null;
+    // What `/readyz` reports about the link: the supervisor's tunnel, or for a Home-initiated
+    // link the shared relay preflight. A link with neither refuses every relayed request.
+    const link = state.value.link;
+    const linkReadiness: MachineListenerDeps["linkReadiness"] = !linkMode ? undefined
+      : supervisor ? () => clientInitiatedLinkReadiness(supervisor.status())
+      : homeInitiated && link && linkKey
+        ? createHomeInitiatedLinkReadiness({ target: { tunnelPort: link.tunnelPort, linkId: link.linkId, apiKeyId: state.value.apiKeyId }, linkKey })
+        : () => ({ ready: false, reason: "tunnel_unavailable" });
     const { server, port: boundPort } = await bindClientListener({
       state: state.value,
       linkMode,
@@ -332,6 +350,9 @@ export async function startClientRuntime(
       restart: { attestationSecret, startedAt: CLIENT_RUNTIME_STARTED_AT, request: () => restartController.request() },
       ...(linkMode ? { linkStatus: () => activeSupervisor?.status() ?? { kind: "stopped" as const }, linkKeySource: linkKey } : {}),
       ...(supervisor ? { linkTunnel: supervisor } : homeInitiated ? { linkTunnel: HOME_INITIATED_LINK_TUNNEL } : {}),
+      ...(linkReadiness ? { linkReadiness } : {}),
+      ...(supervisor ? { linkConnectionGeneration: () => supervisor.connectionGeneration() }
+        : homeInitiated && link ? { linkConnectionGeneration: () => verifiedHomeConnection(link.linkId) } : {}),
     }, rollback === undefined ? io : { ...io, portWaitMs: rollback.portWaitMs });
     const publish = (): void => {
       activeServer = server;
@@ -339,6 +360,7 @@ export async function startClientRuntime(
       servedPort = boundPort;
       activeSupervisor = supervisor;
       supervisor?.start();
+      credentialObservation ??= observeLocalCredentials();
       writePid(process.pid);
       writeRuntimePort(clientRuntimeRecord(process.pid, boundPort, attestationSecret));
       if (linkMode && state.value.link && linkKey) {
@@ -371,6 +393,8 @@ export async function startClientRuntime(
 
   // Stop everything this process serves, giving in-flight requests up to `drainMs`.
   const stopServing = async (drainMs: number): Promise<void> => {
+    credentialObservation?.stop();
+    credentialObservation = null;
     activeReporter?.stop();
     activeReporter = null;
     try {
@@ -417,7 +441,10 @@ export async function startClientRuntime(
         await recycleStandalone(state.value.tokenFingerprint);
       }
     },
-    exitProcess: code => { process.exit(code); },
+    exitProcess: async code => {
+      await flushLinkDiagnostics();
+      process.exit(code);
+    },
   });
 
   installCrashGuards();
@@ -430,6 +457,8 @@ export async function startClientRuntime(
     if (shuttingDown) return;
     shuttingDown = true;
     void (async () => {
+      credentialObservation?.stop();
+      credentialObservation = null;
       activeReporter?.stop();
       activeReporter = null;
       try {
@@ -444,6 +473,7 @@ export async function startClientRuntime(
         console.warn(`[client] listener stop failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         cleanup();
+        await flushLinkDiagnostics();
         // launchd relaunches only unsuccessful exits; an external signal must still count.
         process.exit(handledSignalExitCode(signal));
       }
