@@ -1,4 +1,5 @@
 {
+  "codex-ws-recovery-budget.test.ts": "responses",
   "responses-spill-compression.test.ts": "responses",
   "codex-ws-cache-miss.test.ts": "responses",
   "codex-ws-incremental.test.ts": "responses",

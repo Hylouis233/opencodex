@@ -170,6 +170,7 @@ export async function codexWsUpstreamFetch(
   explicitProxy?: string,
   /** Trusted admitted caller (codexWsCallerKey); scopes pooled sockets and incremental prefixes. */
   caller?: string,
+  recoverPhysicalSend?: (send: () => Promise<void>) => Promise<boolean>,
 ): Promise<Response> {
   const prepared = prepareCodexWsRequest(url, init);
   if (!prepared) return sseFallback(url, prepareCodexHttpInit(url, init));
@@ -264,7 +265,7 @@ export async function codexWsUpstreamFetch(
   return codexWsExchange({
     session, url, init, prepared: outboundPrepared, incrementalPlan, sseFallback, onQuota, beforeDispatch,
     nativeControl: control,
-    beforeContinuation, onPhysicalDispatch,
+    beforeContinuation, onPhysicalDispatch, recoverPhysicalSend,
     preOutputRefusalHold,
     bunVersion: typeof runtime === "string" ? runtime : runtime.version,
   });

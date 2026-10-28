@@ -29,6 +29,7 @@ interface ExchangeOptions {
   onQuota?: CodexWsQuotaObserver;
   beforeDispatch?: (headers: Headers) => void;
   onPhysicalDispatch?: () => void;
+  recoverPhysicalSend?: (send: () => Promise<void>) => Promise<boolean>;
   /** Bun version string the caller gated on; stamped onto the stage record. */
   bunVersion?: string;
   /**
@@ -670,29 +671,43 @@ export function codexWsExchange(options: ExchangeOptions): Promise<Response> {
           frameText = incrementalPlan.fullFrameText;
           incrementalPlan = { ...incrementalPlan, frameText, delta: false, sentBytes: incrementalPlan.fullBytes };
           if (signal?.aborted) { onAbort(); return; }
-          if (codexWsCreateFrameExceedsLimit(frameText)) {
-            terminal = true;
-            cleanup();
-            session.dispose();
-            try { controller.close(); } catch { /* unused stream already closed */ }
-            // The normal HTTP executor retains its pacing, admission and credential guards.
-            resolve(Promise.resolve().then(() => sseFallback(url, init)));
-            return;
-          }
           recoveryAdmissionPending = true;
           void (async () => {
             await beforeContinuation?.();
             if (terminal || responseCommitted) return;
             if (signal?.aborted) { onAbort(); return; }
-            beforeDispatch?.(new Headers(headers));
-            if (signal?.aborted) { onAbort(); return; }
-            options.onPhysicalDispatch?.();
-            if (terminal || signal?.aborted) return;
-            recoveryAdmissionPending = false;
-            ws.send(frameText);
-            recordIncrementalDispatch(incrementalPlan!);
-            sentAt = Date.now();
-          })().catch(error => failStream(error));
+            const send = async () => {
+              if (codexWsCreateFrameExceedsLimit(frameText)) {
+                terminal = true;
+                cleanup();
+                session.dispose();
+                try { controller!.close(); } catch { /* unused stream already closed */ }
+                // Await the physical HTTP admission before committing its result.
+                resolve(await sseFallback(url, init));
+                return;
+              }
+              beforeDispatch?.(new Headers(headers));
+              if (signal?.aborted) { onAbort(); return; }
+              options.onPhysicalDispatch?.();
+              if (terminal || signal?.aborted) return;
+              recoveryAdmissionPending = false;
+              ws.send(frameText);
+              recordIncrementalDispatch(incrementalPlan!);
+              sentAt = Date.now();
+            };
+            const allowed = options.recoverPhysicalSend ? await options.recoverPhysicalSend(send) : (await send(), true);
+            if (!allowed) {
+              terminal = true;
+              cleanup();
+              session.dispose();
+              try { controller.close(); } catch { /* unused stream already closed */ }
+              const rejection = wrappedRejectionResponse({ type: "error", status: cacheMissStatus ?? 400,
+                error: normalized.payload.error, headers: normalized.payload.headers }, metadata?.snapshot() ?? new Headers());
+              if (!rejection) throw new Error("Invalid cache-miss refusal");
+              markCodexWsPreludeProjection(rejection);
+              resolve(rejection);
+            }
+          })().catch(error => { if (terminal && !responseCommitted) reject(error); else failStream(error); });
           return;
         }
         const holdOpen = refusalEligible && sent && !responseCommitted;

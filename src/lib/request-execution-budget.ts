@@ -17,6 +17,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
  */
 import type { SpendSeed, SpendScopes, SpendReservationProof, SpendAdmissionPolicy } from "./spend-reservation-ledger";
 import type { TransientSendBudget } from "./upstream-retry";
+import { SendBudgetExhaustedError } from "./upstream-retry";
 
 export type SendClass =
   | "initial"
@@ -297,8 +298,12 @@ export type PhysicalSendReporter = ((sends: number) => void) & {
   close?: () => void;
   execute?: <T>(run: () => Promise<T>) => Promise<T>;
   bind?: (target: SpendScopes & { targetKey?: string }) => boolean;
+  recover?: PhysicalSendRecovery;
 };
+export type PhysicalSendRecovery = (send: (dispatch: () => void) => Promise<void>) => Promise<boolean>;
 const activePhysicalReporters = new AsyncLocalStorage<PhysicalSendReporter>();
+/** Capture before entering a socket callback; missing ownership never authorizes another send. */
+export const capturePhysicalSendRecovery = (): PhysicalSendRecovery | undefined => activePhysicalReporters.getStore()?.recover;
 /** Selection owners rebind this helper's current start before invoking the executor. */
 export function rebindPhysicalSend(budget: TransientSendBudget | undefined, target: SpendScopes & { targetKey?: string }): boolean {
   if (!(budget as RequestExecutionBudget | undefined)?.spendEnforced) return true;
@@ -317,7 +322,10 @@ export function createPhysicalSendReporter(
   let started = 0;
   let reported = 0;
   let currentOrdinal: number | undefined;
-  const report: PhysicalSendReporter = (sends) => {
+  let executions = 0;
+  let outerReported = 0;
+  let earlyReported = 0;
+  const record = (sends: number) => {
     if (closed) return;
     if (!producer) { if (observer?.enforced !== true) { reportDispatchSends(budget, sends, permit); telemetry?.(sends); } return; }
     const count = Math.min(Math.max(0, Math.trunc(sends)), started - reported);
@@ -329,6 +337,12 @@ export function createPhysicalSendReporter(
       if (counter) counter.spent += count - prepaid;
       telemetry?.(count);
     }
+  };
+  const report: PhysicalSendReporter = sends => {
+    outerReported += sends;
+    const prepaid = Math.min(earlyReported, sends);
+    earlyReported -= prepaid;
+    record(sends - prepaid);
   };
   if (observer?.startRequest || observer?.enforced === true) report.beforeSend = () => {
     if (closed) return false;
@@ -348,14 +362,38 @@ export function createPhysicalSendReporter(
     started++;
     return true;
   };
-  report.execute = run => activePhysicalReporters.run(report, run);
+  report.execute = run => { executions++; return activePhysicalReporters.run(report, run); };
+  report.recover = async send => {
+    if (closed || !isRequestExecutionBudget(budget)) return false;
+    // Retry helpers report on return. Settle their in-flight send before asking for another,
+    // then subtract that early report when the helper eventually reports its own sends.
+    const pending = Math.max(0, executions - outerReported - earlyReported);
+    record(pending);
+    earlyReported += pending;
+    const selected = target();
+    const decision = budget.reserveDispatch({ sendClass: "transient",
+      targetKey: budget.lastTargetKey ?? selected.targetKey ?? JSON.stringify(selected) });
+    if (!decision.allowed) return false;
+    const recovery = decision.permit;
+    const run = () => send(() => {
+      if (!recovery.use()) throw new SendBudgetExhaustedError();
+      telemetry?.(1);
+    });
+    try {
+      await (recovery.execute ? recovery.execute(run) : run());
+      return true;
+    } catch (error) {
+      if (error instanceof SendBudgetExhaustedError) return false;
+      throw error;
+    } finally { recovery.release(); }
+  };
   report.bind = (selected: SpendScopes & { targetKey?: string }) => {
     if (!producer || currentOrdinal === undefined || observer?.enforced !== true) return true;
     return producer.rebindTarget(selected, currentOrdinal);
   };
   report.close = () => {
     if (closed) return;
-    try { if (producer) report(started - reported); }
+    try { if (producer) record(started - reported); }
     finally { closed = true; producer?.close(); }
   };
   return report;

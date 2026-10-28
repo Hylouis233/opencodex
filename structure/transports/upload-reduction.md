@@ -6,7 +6,9 @@
 state behind the default-off `codexWsIncrementalUpload` switch. The process flag lives in
 `src/config/codex-ws-incremental-setting.ts`, so config loading never reaches the Responses
 transport from a Child or Hub client; the transport subscribes to clear its state on disable.
-It implies cross-turn reuse. Ordinary canonical ChatGPT creates can send only newly
+It implies cross-turn reuse. Only the trusted admitted caller can seed or inherit a prefix;
+unidentified callers do neither. Caller identity comes from admission, never the request body.
+Ordinary canonical ChatGPT creates can send only newly
 appended input and the acknowledged response ID when the envelope and full prefix match.
 Provider-issued item IDs/status and empty reasoning content are normalized only for
 comparison; ciphertext, call IDs, nonempty content and tool arguments remain exact.
@@ -14,7 +16,8 @@ Existing stateful lanes, native controls and warmup frames retain their own owne
 Unknown, failed or incomplete completions cannot seed a future delta.
 Before any response activity, an unambiguous `previous_response_not_found` refusal of a
 proxy-synthesized delta permits one full-create resend from that request's retained frame.
-Dispatch admission and cancellation are checked again. An oversized full frame disposes
+Pacing, auth and cancellation are checked again; recovery requires a fresh shared send permit
+and physical-send report. Exhaustion returns the original refusal. An oversized full frame disposes
 the socket and uses the existing guarded HTTP path. Caller-supplied IDs, foreign response
 identities, malformed status wrappers, committed output and unknown delivery never grant
 this recovery. Only a completed recovered response can seed the next prefix.
@@ -32,7 +35,8 @@ oversized-create fallback; `src/server/responses/codex-ws-request.ts` carries th
 `src/server/responses/codex-ws-exchange.ts` records dispatch and seeds completed prefixes;
 `src/server/responses/codex-ws-session.ts` and `src/server/responses/codex-ws-pool.ts` hold
 socket lifetime and retention limits;
-`src/server/responses/fetch-helpers.ts` keeps the explicit-proxy WS path and history slimming.
+`src/server/responses/fetch-helpers.ts` keeps the explicit-proxy WS path and history slimming;
+`src/server/responses/codex-ws-send-accounting.ts` selects reporter ownership for recovery.
 
 `src/server/management/system-routes.ts` exposes content-free send/reference byte counters.
 They compare WS JSON frames with full JSON, not compressed HTTP or interface billing.

@@ -1,4 +1,5 @@
 import { slimOutboundCodexHistory } from "./history-slim";
+import type { PhysicalSendRecovery } from "../../lib/request-execution-budget";
 import type { NativeResponseControl } from "./native-response-control";
 import { codexWsCallerKey, codexWsIncrementalUploadEnabled } from "./codex-ws-incremental";
 import { PROVIDER_HEADER_DEADLINE as HEADER_DEADLINE, type ProviderHeaderDeadline as HeaderDeadline } from "../../lib/provider-admission-wait";
@@ -277,6 +278,8 @@ export function codexWsAdmittedCaller(options: {
 }
 
 export interface ProviderFetchOptions {
+  /** Shared request-owner admission for another physical send after a proxy delta refusal. */
+  codexWsRecovery?: PhysicalSendRecovery;
   accountAutoPause?: (name: string, provider: OcxProviderConfig, headers: Headers) => AccountAutoPauseObserver | undefined;
   /**
    * Keep this send on HTTP even where the WebSocket upstream would normally be selected.
@@ -388,7 +391,7 @@ export function providerFetch(
       const sharedReceipt = (init as Record<symbol, (() => void) | undefined> | undefined)?.[WS_FALLBACK_RECEIPT];
       let notified = false;
       const dispatchInit = { ...withUpstreamHttpVersion(input, init, provider), timeout: 0,
-        ...(options.onPhysicalDispatch ? { [PHYSICAL_DISPATCH]: () => {
+        ...(options.onPhysicalDispatch || sharedReceipt ? { [PHYSICAL_DISPATCH]: () => {
           if (sharedReceipt) sharedReceipt();
           else if (!notified) { options.onPhysicalDispatch!(); notified = true; }
         } } : {}),
@@ -431,7 +434,10 @@ export function providerFetch(
       // request over HTTP, and dropping the provider's `upstreamHttpVersion`
       // there would silently negotiate a transport the operator ruled out.
       let notified = false;
+      const recoverPhysicalSend = options.codexWsRecovery;
+      let recoveryDispatch: (() => void) | undefined;
       const notifyOnce = (): void => {
+        if (recoveryDispatch) { recoveryDispatch(); return; }
         if (notified) return;
         notified = true;
         options.onPhysicalDispatch?.();
@@ -444,7 +450,11 @@ export function providerFetch(
         codexWsIncrementalUploadEnabled() ? (slimOutboundCodexHistory(url, wsInit) ?? wsInit) : wsInit;
       const wsSend = codexWsExecutor((url: Parameters<typeof globalThis.fetch>[0], wsInit?: RequestInit) => codexWsUpstreamFetch(String(url), finalWsInit(url, wsInit ?? init),
         fallback, runtime, options.onCodexWsQuota, options.beforeDispatch, options.nativeControl,
-        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, explicitWsProxy, options.codexWsCaller),
+        async () => { (await waitForPacing(init.signal ?? undefined))?.release(); }, notifyOnce, options.preOutputRefusalHold, explicitWsProxy, options.codexWsCaller,
+        async send => recoverPhysicalSend ? recoverPhysicalSend(async dispatch => {
+          recoveryDispatch = dispatch;
+          try { await send(); } finally { recoveryDispatch = undefined; }
+        }) : false),
         { provider, http: markEgressTransparentExecutor(fallback) });
       // A WS frame is a physical send like any other, so it runs the same override: that is where a
       // key-auth send is committed to its attempt row and the send budget is rebound to the
