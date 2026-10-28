@@ -12,6 +12,12 @@ Provider-issued item IDs/status and empty reasoning content are normalized only 
 comparison; ciphertext, call IDs, nonempty content and tool arguments remain exact.
 Existing stateful lanes, native controls and warmup frames retain their own ownership.
 Unknown, failed or incomplete completions cannot seed a future delta.
+Before any response activity, an unambiguous `previous_response_not_found` refusal of a
+proxy-synthesized delta permits one full-create resend from that request's retained frame.
+Dispatch admission and cancellation are checked again. An oversized full frame disposes
+the socket and uses the existing guarded HTTP path. Caller-supplied IDs, foreign response
+identities, malformed status wrappers, committed output and unknown delivery never grant
+this recovery. Only a completed recovered response can seed the next prefix.
 
 The opt-in preserves an explicit HTTP provider proxy instead of dropping it on the WS
 path; unsupported egress and custom executors retain HTTP fallback. A per-request ID
@@ -32,6 +38,8 @@ socket lifetime and retention limits;
 They compare WS JSON frames with full JSON, not compressed HTTP or interface billing.
 `tests/responses/codex-ws-incremental.test.ts` covers prefix changes, identity separation,
 unknown completion, ciphertext changes, references and image-policy composition.
+`tests/responses/codex-ws-cache-miss.test.ts` covers bounded cache-miss recovery and its
+caller, admission, cancellation, output-commit and full-frame-size exclusions.
 `tests/responses/codex-ws-pool-contention.test.ts` checks continuation across the old
 idle/age deadlines and expiry at the bounded replacement deadlines. These are retention
 limits, not upstream availability guarantees; peer closure still drops all socket state.

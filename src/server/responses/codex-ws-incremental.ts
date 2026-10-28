@@ -1,5 +1,5 @@
 // Send only new input on acknowledged, account-bound native Codex WebSocket continuations.
-// No retry or upstream-response storage policy is changed by this module.
+// Only an explicit cache-miss refusal of a proxy delta permits full-create recovery.
 import { codexWsIncrementalUploadEnabled, onCodexWsIncrementalUploadDisabled } from "../../config/codex-ws-incremental-setting";
 export { codexWsIncrementalUploadEnabled, setCodexWsIncrementalUpload } from "../../config/codex-ws-incremental-setting";
 export const CODEX_WS_INCREMENTAL_IDLE_MS = 600_000;
@@ -68,7 +68,7 @@ export function codexWsCallerKey(principal: string | undefined, admission: { kin
   if (principal) return `principal:${principal}`;
   return admission?.kind === "loopback" ? "loopback" : undefined;
 }
-export type IncrementalPlan = { session: object; caller: string; frameText: string; fullBytes: number; sentBytes: number;
+export type IncrementalPlan = { session: object; caller: string; frameText: string; fullFrameText: string; fullBytes: number; sentBytes: number;
   delta: boolean; envelope: string; items: string[]; retainable: boolean };
 /** True while any socket holds an acknowledged prefix, so an oversized create could still shrink to a delta. */
 export function codexWsIncrementalHasRetainedState(): boolean { return states.size > 0; }
@@ -106,7 +106,7 @@ function planIncrementalFrame(session: object, fullFrame: string, caller: string
   }
   // An in-flight turn invalidates the previous local prefix. Unknown completion never seeds reuse.
   forgetIncrementalSession(session);
-  return { session, caller, frameText, fullBytes, sentBytes: Buffer.byteLength(frameText), delta,
+  return { session, caller, frameText, fullFrameText: fullFrame, fullBytes, sentBytes: Buffer.byteLength(frameText), delta,
     envelope, items, retainable: fullBytes <= MAX_CONTEXT };
 }
 export function recordIncrementalDispatch(plan: IncrementalPlan): void {
