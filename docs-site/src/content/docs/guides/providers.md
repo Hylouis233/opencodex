@@ -1515,7 +1515,9 @@ StepCode:
   stay in your client; OpenCodex stages no MCP server and holds no tool results itself.
 - **One process per conversation:** StepCode carries conversation context only inside its own
   process — its input channel reduces every message to text and images — so a conversation maps onto
-  one long-lived process that OpenCodex keeps keyed to your thread. A process that dies is reported,
+  one long-lived process that OpenCodex keys to your authenticated caller identity, provider and
+  thread. Keyless callers receive a separate process per request and cannot continue tool calls
+  across requests. Keep the tool catalog unchanged when returning a held result. A process that dies is reported,
   not silently restarted, because tool results already delivered cannot be replayed through this
   route.
 - **Two documented limits:** a tool that takes longer than two minutes to come back exceeds the
