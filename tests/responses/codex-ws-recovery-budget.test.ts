@@ -58,14 +58,46 @@ function budget(cap: number, enforced: boolean) {
   enforced ? { enforced: true, charge: () => true, refund: () => {}, ensureSeed: () => ({}),
     beginReporter: () => ({ start: () => {}, rebindTarget: () => true, report: () => {}, close: () => {} }) } : undefined);
 }
-async function run(input: unknown[], sendBudget: ReturnType<typeof budget>, initialPermit?: SingleUseDispatchPermit) {
+async function run(input: unknown[], sendBudget: ReturnType<typeof budget>, initialPermit?: SingleUseDispatchPermit, runConfig = config) {
   const req = new Request('http://localhost/v1/responses', { method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer fixture', 'chatgpt-account-id': 'fixture-account', 'thread-id': 'fixture-thread' },
     body: JSON.stringify({ model: 'fixture', input, stream: true, store: false,
       client_metadata: { thread_id: 'fixture-thread', turn_id: 'fixture-turn' } }) });
-  return handleResponses(req, config, { model: '', provider: '' }, { codexWsRuntimeIdentity: '1.4.4', sendBudget,
+  return handleResponses(req, runConfig, { model: '', provider: '' }, { codexWsRuntimeIdentity: '1.4.4', sendBudget,
     ...(initialPermit ? { comboInitialSend: { permit: initialPermit } } : {}),
     admission: { kind: 'loopback', source: 'loopback' } });
+}
+for (const enforced of [false, true]) for (const prepaid of [false, true]) {
+  for (const failure of ['503', 'reset'] as const) {
+    test(`providerFetch stops after failed HTTP recovery (failure=${failure}, enforced=${enforced}, prepaid=${prepaid})`, async () => {
+      const initial = [message('a'.repeat(8 * 1024 * 1024))];
+      expect(await (await run(initial, budget(1, enforced))).text()).toContain('response.completed');
+      const shared = budget(2, enforced);
+      const booking = prepaid ? shared.reserveDispatch({ sendClass: 'initial', targetKey: 'fixture-target', countedExternally: true }) : undefined;
+      if (booking && !booking.allowed) throw new Error('fixture initial reservation refused');
+      const permit = booking?.allowed ? booking.permit : undefined;
+      let httpSends = 0;
+      const fetchBefore = globalThis.fetch;
+      globalThis.fetch = Object.assign(async () => {
+        httpSends++;
+        if (failure === 'reset') throw Object.assign(new Error('fixture reset'), { code: 'ECONNRESET' });
+        return new Response('fixture transient', { status: 503 });
+      }, { preconnect: fetchBefore.preconnect }) as typeof fetch;
+      try {
+        const runConfig = { ...config, providers: { openai: { ...config.providers.openai!, retryOnReset: {} } } };
+        const response = await run([...initial, answer, message('b'.repeat(8 * 1024 * 1024))], shared, permit, runConfig);
+        const body = await response.text();
+        expect(httpSends).toBe(1);
+        expect(Socket.all.flatMap(socket => socket.frames)).toHaveLength(2);
+        expect(shared.used).toBe(2);
+        if (enforced) expect(shared.physicalStarted).toBe(2);
+        expect(response.status).toBe(failure === '503' ? 503 : 429);
+        expect(body).toContain(failure === '503' ? 'fixture transient' : 'upstream_reset_replay_refused');
+        permit?.release();
+        expect(shared.used).toBe(2);
+      } finally { globalThis.fetch = fetchBefore; permit?.release(); }
+    });
+  }
 }
 for (const enforced of [false, true]) {
   for (const cap of [1, 2]) test(`providerFetch retains a combo's prepaid budget during recovery (cap=${cap}, enforced=${enforced})`, async () => {
