@@ -269,6 +269,7 @@ const dispatchSpendProofs = new WeakMap<SingleUseDispatchPermit, {
   owner: SharedSendLedger;
   claim(): SpendReservationProof | undefined;
   report(): boolean;
+  pending(): boolean;
 }>();
 
 /** One preflight for the exact prepaid dispatch, never another budget or a replayed permit. */
@@ -294,6 +295,7 @@ export function reportDispatchSends(
 
 /** A helper owns its starts and can never consume another helper's receipts. */
 export type PhysicalSendReporter = ((sends: number) => void) & {
+  remaining?: () => number;
   beforeSend?: () => boolean;
   close?: () => void;
   execute?: <T>(run: () => Promise<T>) => Promise<T>;
@@ -343,6 +345,19 @@ export function createPhysicalSendReporter(
     const prepaid = Math.min(earlyReported, sends);
     earlyReported -= prepaid;
     record(sends - prepaid);
+  };
+  if (isRequestExecutionBudget(budget)) report.remaining = () => {
+    if (closed) return 0;
+    // The caller already admitted this helper's initial send. Preserve that grant;
+    // only subsequent retries must reconcile the allowance spent inside the helper.
+    if (executions === 0 && outerReported === 0) return Infinity;
+    const pending = Math.max(0, executions - outerReported - earlyReported);
+    const receipt = permit && dispatchSpendProofs.get(permit);
+    const prepaid = receipt?.owner === counter && receipt?.pending() ? 1 : 0;
+    // Deferred reports still consume allowance. Only this reporter's pending booking
+    // authorizes its prepaid send; recovery and other owners have already charged theirs.
+    return Math.max(0, Math.min(budget.policy.baseSendAllowance, budget.policy.maxTotalModelSends)
+      - budget.used - pending + prepaid);
   };
   if (observer?.startRequest || observer?.enforced === true) report.beforeSend = () => {
     if (closed) return false;
@@ -611,7 +626,7 @@ function createRequestExecutionBudgetWithLedger(
         },
       };
       let preflightClaimed = false;
-      dispatchSpendProofs.set(permit, { owner: counter, report: () => {
+      dispatchSpendProofs.set(permit, { owner: counter, pending: () => counter.pendingExternalSends.has(receipt), report: () => {
         if (!counter.pendingExternalSends.has(receipt)) return false;
         if (spendProof) observer?.dispatch?.(spendProof);
         counter.pendingExternalSends.delete(receipt);

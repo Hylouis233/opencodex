@@ -111,7 +111,10 @@ For a Codex WebSocket request, the receipt runs before the frame is sent and at 
 the WS attempt and its unsent HTTP fallback. Incremental cache-miss recovery captures the shared
 `src/lib/request-execution-budget.ts` reporter, settles the delta's deferred report, then reserves
 a new transient permit. WS and oversized HTTP recovery confirm that permit at physical dispatch;
-the outer helper subtracts the early report. Exhaustion preserves the upstream refusal.
+the outer helper subtracts the early report. Its live remaining allowance includes deferred
+reports and credits only its own unsettled prepaid booking. Both spend modes consult that
+shared remainder before another transient or reset retry. A failed recovery cannot fund an
+extra send, and exhaustion preserves the upstream response or reset replay refusal.
 Incremental Combo sends use the reporter to settle their exact initial booking and recovery.
 If WS send then fails and HTTP refuses before dispatch, that
 accepted booking remains charged even though no physical send occurred.
